@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Build and local output
+build/
+dist/
+output/
+logs/
+*.log
+
+# Local settings
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini
+
+# Private source materials: keep local; do not add by default
+/*.xlsx
+/*.xls
+/*.xlsm
+/*.pptx
