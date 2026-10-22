@@ -28,6 +28,7 @@ Thumbs.db
 Desktop.ini
 
 # Private source materials: keep local; do not add by default
+/Исходники/
 /*.xlsx
 /*.xls
 /*.xlsm
