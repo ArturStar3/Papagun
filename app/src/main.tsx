@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { invoke } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { Check, ChevronRight, FileSpreadsheet, FileText, FolderOpen, Layers3, Moon, Sun, X } from 'lucide-react';
-import { ArticleTable, ChoicePanel, bookTitle, type Book, type Catalog } from './selection';
+import { ArticleTable, ChoicePanel, bookTitle, type ArticleGroup, type Book, type Catalog } from './selection';
 import './style.css';
 
 type Result = { output: string; slides: number; articles: number };
@@ -15,6 +15,7 @@ function App() {
   const [months, setMonths] = useState<string[]>([]);
   const [branches, setBranches] = useState<string[]>([]);
   const [articles, setArticles] = useState<string[]>([]);
+  const [groups, setGroups] = useState<ArticleGroup[]>([]);
   const [busy, setBusy] = useState<'inspect' | 'generate' | null>(null);
   const [error, setError] = useState('');
   const [result, setResult] = useState<Result | null>(null);
@@ -37,14 +38,14 @@ function App() {
     const selected = await open({ multiple: false, filters: [{ name: 'Excel', extensions: ['xlsx'] }] });
     if (typeof selected === 'string') {
       setFiles(prev => ({ ...prev, [book]: selected }));
-      setCatalog(null); setMonths([]); setBranches([]); setArticles([]); setResult(null); setError('');
+      setCatalog(null); setMonths([]); setBranches([]); setArticles([]); setGroups([]); setResult(null); setError('');
     }
   }
   async function inspect() {
     setBusy('inspect'); setError(''); setResult(null);
     try {
       const next = await invoke<Catalog>('engine', { action: 'inspect', payload: files });
-      setCatalog(next); setMonths(next.months.slice(0, 9)); setBranches(next.branches); setArticles([]);
+      setCatalog(next); setMonths(next.availableMonths); setBranches(next.availableBranches); setArticles([]); setGroups([]);
       requestAnimationFrame(() => filtersRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
     } catch (e) { setError(String(e)); }
     finally { setBusy(null); }
@@ -55,13 +56,13 @@ function App() {
     if (!output) return;
     setBusy('generate'); setError(''); setResult(null);
     try {
-      const next = await invoke<Result>('engine', { action: 'generate', payload: { ...files, months, branches, articles, output } });
+      const next = await invoke<Result>('engine', { action: 'generate', payload: { ...files, months, branches, articles, groups, output } });
       setResult(next);
       requestAnimationFrame(() => exportRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
     } catch (e) { setError(String(e)); }
     finally { setBusy(null); }
   }
-  const canGenerate = Boolean(catalog && months.length && branches.length && articles.length && !busy);
+  const canGenerate = Boolean(catalog && months.length && branches.length && !busy);
 
   return <div className={`app ${theme}`}>
     <aside className="sidebar" aria-label="Навигация">
@@ -87,13 +88,13 @@ function App() {
           <div className="section-actions"><button className="primary" onClick={inspect} disabled={!files.quantity || !files.financial || !!busy}>{busy === 'inspect' ? 'Чтение книг…' : catalog ? 'Обновить данные' : 'Загрузить данные'}</button>{catalog && <span className="inline-success"><Check size={16}/> Найдено {catalog.articles.length} позиций</span>}</div>
         </section>
         {catalog && <section className="section" ref={filtersRef} aria-labelledby="selection-title">
-          <div className="section-title"><span className="step">2</span><div><h2 id="selection-title">Данные отчёта</h2><p>Выберите статьи из количественной книги: один выбор применяется к обоим источникам.</p></div></div>
+          <div className="section-title"><span className="step">2</span><div><h2 id="selection-title">Данные отчёта</h2><p>Выберите период, филиалы и статьи. Статистические показатели и расходы входят в каждый отчёт.</p></div></div>
           <div className="selection-grid">
-            <ChoicePanel title="Период" values={catalog.months} selected={months} columns={2} onChange={items => { setMonths(items); setResult(null); }}/>
-            <ChoicePanel title="Филиалы" values={catalog.branches} selected={branches} onChange={items => { setBranches(items); setResult(null); }}/>
+            <ChoicePanel title="Месяцы" values={catalog.months} available={catalog.availableMonths} selected={months} onChange={items => { setMonths(items); setResult(null); }}/>
+            <ChoicePanel title="Филиалы" values={catalog.branches} available={catalog.availableBranches} selected={branches} onChange={items => { setBranches(items); setResult(null); }}/>
           </div>
-          <ArticleTable items={catalog.articles} selected={articles} onChange={items => { setArticles(items); setResult(null); }}/>        </section>}
-        {catalog && <section className="section result-section" ref={exportRef} aria-labelledby="export-title"><div className="section-title"><span className="step">3</span><div><h2 id="export-title">Презентация</h2><p>Диаграммы и таблицы внутри PPTX остаются редактируемыми.</p></div></div><div className="export-bar"><div><strong>{articles.length} {articles.length === 1 ? 'позиция' : 'позиций'}</strong><span>{months.length} мес. · {branches.length} фил.</span></div><button className="primary" ref={generateButtonRef} onClick={() => setConfirm(true)} disabled={!canGenerate}>{busy === 'generate' ? 'Создание презентации…' : 'Создать презентацию'}</button></div>{result && <div className="success" role="status"><Check size={20}/><div><strong>Презентация сохранена</strong><span>{result.slides} слайдов · {result.output}</span></div></div>}</section>}
+          <ArticleTable items={catalog.articles} selected={articles} groups={groups} onChange={items => { setArticles(items); setResult(null); }} onGroupsChange={items => { setGroups(items); setResult(null); }}/></section>}
+        {catalog && <section className="section result-section" ref={exportRef} aria-labelledby="export-title"><div className="section-title"><span className="step">3</span><div><h2 id="export-title">Презентация</h2><p>Порядок: три статистических слайда, выбранные разделы статей, затем два слайда расходов. Диаграммы остаются редактируемыми.</p></div></div><div className="export-bar"><div><strong>{articles.length + groups.length} показателей из статей</strong><span>{months.length} мес. · {branches.length} фил. · 5 обязательных слайдов</span></div><button className="primary" ref={generateButtonRef} onClick={() => setConfirm(true)} disabled={!canGenerate}>{busy === 'generate' ? 'Создание презентации…' : 'Создать презентацию'}</button></div>{result && <div className="success" role="status"><Check size={20}/><div><strong>Презентация сохранена</strong><span>{result.slides} слайдов · {result.output}</span></div></div>}</section>}
         {error && <div className="error" role="alert"><span>{error}</span><button aria-label="Закрыть сообщение" onClick={() => setError('')}><X size={17}/></button></div>}
       </div>
     </main>
@@ -105,7 +106,7 @@ function App() {
         if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
         else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
       }
-    }}><button className="modal-close" aria-label="Закрыть" onClick={() => closeConfirm()}><X size={18}/></button><div className="modal-icon"><FileText size={22}/></div><h2 id="confirm-title">Создать презентацию?</h2><p>Будут обработаны {articles.length} позиций для {branches.length} филиалов и {months.length} месяцев. Следующим шагом выберите место сохранения.</p><div className="modal-actions"><button className="secondary" onClick={() => closeConfirm()}>Отмена</button><button className="primary" autoFocus onClick={generate}>Выбрать файл</button></div></div></div>}
+    }}><button className="modal-close" aria-label="Закрыть" onClick={() => closeConfirm()}><X size={18}/></button><div className="modal-icon"><FileText size={22}/></div><h2 id="confirm-title">Создать презентацию?</h2><p>Будут обработаны {articles.length + groups.length} показателей из статей, статистика и расходы для {branches.length} филиалов и {months.length} месяцев. Следующим шагом выберите место сохранения.</p><div className="modal-actions"><button className="secondary" onClick={() => closeConfirm()}>Отмена</button><button className="primary" autoFocus onClick={generate}>Выбрать файл</button></div></div></div>}
   </div>;
 }
 
