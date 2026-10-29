@@ -88,7 +88,7 @@ function App() {
           <div className="section-actions"><button className="primary" onClick={inspect} disabled={!files.quantity || !files.financial || !!busy}>{busy === 'inspect' ? 'Чтение книг…' : catalog ? 'Обновить данные' : 'Загрузить данные'}</button>{catalog && <span className="inline-success"><Check size={16}/> Найдено {catalog.articles.length} позиций</span>}</div>
         </section>
         {catalog && <section className="section" ref={filtersRef} aria-labelledby="selection-title">
-          <div className="section-title"><span className="step">2</span><div><h2 id="selection-title">Данные отчёта</h2><p>Выберите период, филиалы и статьи. Статистические показатели и расходы входят в каждый отчёт.</p></div></div>
+          <div className="section-title"><span className="step">2</span><div><h2 id="selection-title">Данные отчёта</h2><p>Выберите месяцы и филиалы. Первые три слайда с аппаратами, пациентами и процедурами строятся автоматически; статьи ниже добавляют тематические слайды.</p></div></div>
           <div className="selection-grid">
             <ChoicePanel title="Месяцы" values={catalog.months} available={catalog.availableMonths} selected={months} onChange={items => { setMonths(items); setResult(null); }}/>
             <ChoicePanel title="Филиалы" values={catalog.branches} available={catalog.availableBranches} selected={branches} onChange={items => { setBranches(items); setResult(null); }}/>

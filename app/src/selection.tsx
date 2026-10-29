@@ -6,8 +6,8 @@ export type Article = { id: string; code: string; name: string; group: string };
 export type Catalog = { months: string[]; availableMonths: string[]; branches: string[]; availableBranches: string[]; articles: Article[] };
 export type ArticleGroup = { id: string; title: string; articles: string[] };
 export const bookTitle: Record<Book, string> = { quantity: 'Количественный бюджет', financial: 'Финансовый бюджет' };
-const categories = ['Статьи до 200', 'Лекарственные препараты', 'Изделия медицинского назначения', 'Расходные медицинские материалы', 'Статьи от 214 и выше'];
-const reportCategories = new Set(categories.slice(1, 4));
+const categories = ['Лекарственные препараты', 'Изделия медицинского назначения', 'Расходные медицинские материалы', 'Статьи от 214 и выше'];
+const reportCategories = new Set(categories.slice(0, 3));
 
 export function ChoicePanel({ title, values, available = values, selected, onChange }: {
   title: string; values: string[]; available?: string[]; selected: string[]; onChange: (items: string[]) => void;
@@ -43,7 +43,7 @@ export function ArticleTable({ items, selected, groups, onChange, onGroupsChange
   items: Article[]; selected: string[]; groups: ArticleGroup[];
   onChange: (items: string[]) => void; onGroupsChange: (items: ArticleGroup[]) => void;
 }) {
-  const [category, setCategory] = useState(categories[1]);
+  const [category, setCategory] = useState(categories[0]);
   const [query, setQuery] = useState('');
   const [groupTitle, setGroupTitle] = useState('');
   const deferredQuery = useDeferredValue(query);

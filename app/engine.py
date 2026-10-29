@@ -39,16 +39,15 @@ def checked_files(payload):
 
 def group_for(code):
     try:
-        n = float(code)
+        prefix = int(str(code).strip().split(".")[0])
     except (TypeError, ValueError):
         return "Прочие статьи"
-    if n < 200:
+    if prefix < 200:
         return "Статьи до 200"
-    prefix = str(code).strip().split(".")[0]
-    if prefix == "211": return "Лекарственные препараты"
-    if prefix == "212": return "Изделия медицинского назначения"
-    if prefix == "213": return "Расходные медицинские материалы"
-    if int(prefix) >= 214: return "Статьи от 214 и выше"
+    if prefix == 211: return "Лекарственные препараты"
+    if prefix == 212: return "Изделия медицинского назначения"
+    if prefix == 213: return "Расходные медицинские материалы"
+    if prefix >= 214: return "Статьи от 214 и выше"
     return "Прочие статьи"
 
 
@@ -98,7 +97,8 @@ def inspect(payload):
                     items[key] = {"id": "\u001f".join(key), "code": code, "name": name, "group": group_for(code)}
         finally:
             wb.close()
-    ordered = sorted(items.values(), key=lambda x: (x["group"], x["code"], x["name"]))
+    ordered = sorted((item for item in items.values() if item["group"] != "Статьи до 200"),
+                     key=lambda x: (x["group"], x["code"], x["name"]))
     branches = [b for b in BRANCHES if b in available]
     # The reference report contains 19 centers; the twentieth source sheet lacks
     # required September financial facts and has no approved missing-value rule.
