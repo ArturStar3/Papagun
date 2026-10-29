@@ -1,0 +1,1 @@
+{"$schema":"../gen/schemas/desktop-schema.json","identifier":"default","description":"Local report workflow","windows":["main"],"permissions":["core:default","dialog:allow-open","dialog:allow-save"]}

@@ -1,0 +1,28 @@
+# Papagun Desktop
+
+Локальное приложение Tauri 2 + React + TypeScript. Обработчик `engine.py` вызывает проверенные функции расчёта и построения редактируемых слайдов из `excel_loading.ipynb`.
+
+## Разработка
+
+Требуются Node.js, Python с пакетами из `requirements-engine.txt`, Rust MSVC toolchain и Visual Studio C++ Build Tools. Скрипт сборки сам находит установленный MSVC toolchain. В корне проекта:
+
+```powershell
+python -m pip install -r app/requirements-engine.txt
+Set-Location app
+npm.cmd ci
+npm.cmd exec tauri -- dev
+```
+
+В режиме разработки Tauri запускает `python app/engine.py`. Рабочий экспорт собирает слайды в памяти и сохраняет только один выбранный итоговый PPTX. Отдельные тестовые презентации и тестовый скрипт в приложении отсутствуют.
+
+## Сборка Windows
+
+Для упаковки в папке `Исходники` нужна справочная книга соответствия названий центров. Бюджетные книги пользователя в EXE не включаются. Из корня проекта:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File app/build-windows.ps1
+```
+
+Скрипт упаковывает Python, notebook и справочник в sidecar, затем собирает Tauri NSIS установщик. Настройка `offlineInstaller` включает автономный установщик WebView2; установка и работа готового приложения не требуют сети. Проверенный результат сборки: `app/src-tauri/target/release/bundle/nsis/Papagun_0.1.0_x64-setup.exe` (316,21 MiB). Самостоятельный EXE находится в `app/src-tauri/target/release/papagun.exe`; для запуска рядом с ним нужен `papagun-engine.exe`, поэтому для пользователей предназначен установщик.
+
+Пара книг NL выбирается в интерфейсе. Пользователь указывает месяцы, филиалы и точные пары «код + название» из каждой книги. На одном слайде размещаются до трёх статей; созданный PPTX сохраняется в выбранное место. Исходные XLSX не изменяются.
