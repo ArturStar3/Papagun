@@ -87,7 +87,7 @@ function App() {
           <div className="section-actions"><button className="primary" onClick={inspect} disabled={!files.quantity || !files.financial || !!busy}>{busy === 'inspect' ? 'Чтение книг…' : catalog ? 'Обновить данные' : 'Загрузить данные'}</button>{catalog && <span className="inline-success"><Check size={16}/> Найдено {catalog.articles.length} позиций</span>}</div>
         </section>
         {catalog && <section className="section" ref={filtersRef} aria-labelledby="selection-title">
-          <div className="section-title"><span className="step">2</span><div><h2 id="selection-title">Данные отчёта</h2><p>Каждая выбранная статья попадёт в презентацию. Пустые значения проверяются по правилам алгоритма.</p></div></div>
+          <div className="section-title"><span className="step">2</span><div><h2 id="selection-title">Данные отчёта</h2><p>Выберите статьи из количественной книги: один выбор применяется к обоим источникам.</p></div></div>
           <div className="selection-grid">
             <ChoicePanel title="Период" values={catalog.months} selected={months} columns={2} onChange={items => { setMonths(items); setResult(null); }}/>
             <ChoicePanel title="Филиалы" values={catalog.branches} selected={branches} onChange={items => { setBranches(items); setResult(null); }}/>

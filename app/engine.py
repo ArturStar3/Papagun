@@ -66,7 +66,9 @@ def inspect(payload):
             if not sheets:
                 raise ValueError(f"В книге {book} не найдены листы филиалов NL.")
             available = set(sheets) if available is None else available & set(sheets)
-            limit = 141 if book == "quantity" else 193
+            if book != "quantity":
+                continue
+            limit = 141
             for branch in sheets:
                 ws = wb[branch]
                 if str(ws["B6"].value).strip().casefold() != "код статей":
@@ -78,11 +80,11 @@ def inspect(payload):
                     code, name = str(code).strip(), str(name).strip()
                     if not re.fullmatch(r"\d+(?:\.\d+)*\.?", code):
                         continue
-                    key = (book, code, name)
-                    items[key] = {"id": "\u001f".join(key), "book": book, "code": code, "name": name, "group": group_for(code)}
+                    key = (code, name)
+                    items[key] = {"id": "\u001f".join(key), "code": code, "name": name, "group": group_for(code)}
         finally:
             wb.close()
-    ordered = sorted(items.values(), key=lambda x: (x["group"], x["code"], x["name"], x["book"]))
+    ordered = sorted(items.values(), key=lambda x: (x["group"], x["code"], x["name"]))
     return {"months": MONTHS, "branches": [b for b in BRANCHES if b in available], "articles": ordered}
 
 
@@ -115,6 +117,22 @@ def notebook_namespace(files, branches, months):
     return ns
 
 
+def financial_selector(frame, code, quantity_name, branches, months):
+    """Use the quantity key; accept a different finance label only for an unambiguous code."""
+    codes = frame["Код статей"].map(lambda value: value.strip() if isinstance(value, str) else value)
+    matches = frame.loc[codes.eq(code)
+                        & frame["Наименование филиала"].isin(branches)
+                        & frame["Месяц"].isin(months)]
+    names = set(matches["Наименование статей"].dropna())
+    if not names:
+        raise ValueError(f"Код {code} отсутствует в финансовой книге.")
+    if quantity_name in names:
+        return (code, quantity_name)
+    if len(names) == 1:
+        return code
+    raise ValueError(f"Код {code} имеет несколько финансовых наименований; сопоставление с «{quantity_name}» неоднозначно.")
+
+
 def generate(payload):
     import hashlib
     from io import BytesIO
@@ -138,17 +156,24 @@ def generate(payload):
     frames = {}
     for book in files:
         frames[book] = ns["build_branches_dataframe"](book, periods=months)[:2]
-    selected = {"quantity": [], "financial": []}
+    selected = []
     for raw in articles:
-        book, code, name = raw.split("\u001f")
-        if book not in selected or not code or not name:
+        parts = raw.split("\u001f")
+        if len(parts) != 2 or not all(parts):
             raise ValueError("Некорректная статья в выборе.")
-        pair = (code, name)
-        if pair in selected[book]:
+        pair = tuple(parts)
+        if pair in selected:
             raise ValueError("Статья выбрана повторно.")
-        selected[book].append(pair)
+        selected.append(pair)
+    selectors = {
+        "quantity": selected,
+        "financial": [financial_selector(frames["financial"][0], code, name, branches, months)
+                      for code, name in selected],
+    }
+    if len(set(selectors["financial"])) != len(selected):
+        raise ValueError("Несколько выбранных количественных позиций соответствуют одной финансовой статье. Сопоставление неоднозначно.")
     payloads = []
-    for book, choices in selected.items():
+    for book, choices in selectors.items():
         frame, provenance = frames[book]
         for start in range(0, len(choices), 3):
             group = choices[start:start + 3]
@@ -183,7 +208,7 @@ def generate(payload):
     finally:
         if os.path.exists(temp_path):
             os.unlink(temp_path)
-    return {"output": str(output), "slides": len(payloads), "articles": len(articles)}
+    return {"output": str(output), "slides": len(payloads), "articles": len(selected)}
 
 
 if __name__ == "__main__":
