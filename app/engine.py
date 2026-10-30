@@ -14,10 +14,7 @@ def asset(name):
 
 
 NOTEBOOK = asset("excel_loading.ipynb")
-CENTERS = asset("Соответствие названий центров в презентации и эксель Nephrolife.xlsx")
 LOGO = asset("nephrolife_logo.jpg")
-if not CENTERS.is_file():
-    CENTERS = asset("Исходники/Соответствие названий центров в презентации и эксель Nephrolife.xlsx")
 if not LOGO.is_file():
     LOGO = asset("resources/nephrolife_logo.jpg")
 MONTHS = ("январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь")
@@ -123,7 +120,6 @@ def notebook_namespace(files, branches, months):
         if index == 12:
             ns["branch_maps"] = {key: read_branch_index(path) for key, path in files.items()}
         exec(compile(source, str(NOTEBOOK), "exec"), ns)
-    ns["CENTERS"] = CENTERS
     ns["LOGO"] = LOGO
     ns["BRANCH_SHEETS"] = list(branches)
     ns["excel_files"] = files
@@ -138,10 +134,13 @@ def notebook_namespace(files, branches, months):
     exec(compile(source, str(NOTEBOOK), "exec"), ns)
     for index in (17, 19, 21):
         exec(compile("".join(cells[index]["source"]), str(NOTEBOOK), "exec"), ns)
-    original_center_map = ns["slide5_center_map"]
     def current_center_map():
-        mapping = original_center_map()
-        mapping.update({ns["_center_key"](branch): branch for branch in branches})
+        mapping = {}
+        for branch in branches:
+            key = ns["_center_key"](branch)
+            if key in mapping and mapping[key] != branch:
+                raise ValueError(f"Названия филиалов не различаются после нормализации: {mapping[key]} и {branch}.")
+            mapping[key] = branch
         return mapping
     ns["slide5_center_map"] = current_center_map
     return ns
@@ -183,19 +182,6 @@ def period_caption(months):
     return f"{len(months)} выбранных месяцев"
 
 
-def presentation_labels(branches):
-    from openpyxl import load_workbook
-
-    workbook = load_workbook(CENTERS, read_only=True, data_only=True)
-    try:
-        labels = {"Усть-Каменогорск (NL UK)": "Усть-Каменогорск"}
-        labels.update({str(branch).strip(): str(label).strip() for label, branch in list(workbook.active.values)[1:]
-                       if label and branch and str(branch).strip() != "Усть-Каменогорск"})
-    finally:
-        workbook.close()
-    return tuple(labels.get(branch, branch) for branch in branches)
-
-
 def combined_model(ns, frame, provenance, branches, months, book, item):
     from decimal import Decimal
 
@@ -205,6 +191,7 @@ def combined_model(ns, frame, provenance, branches, months, book, item):
         frame, provenance, list(branches), months=months, book=book,
         first_metric="Утверждено" if book == "quantity" else "Факт по норме",
         divisor=Decimal(1 if book == "quantity" else 1000), articles=selectors,
+        missing_as_zero=True,
     )
     if len(components) == 1:
         return raw[0]
@@ -388,7 +375,7 @@ def generate(payload):
         raise ValueError("Несколько выбранных количественных позиций соответствуют одной финансовой статье. Сопоставление неоднозначно.")
     payloads = []
     quantity, quantity_provenance = frames["quantity"]
-    labels = presentation_labels(branches)
+    labels = branches
     for row, code, title, forms in ((13, "2", "АППАРАТЫ", ("аппарат", "аппарата", "аппаратов")),
                                     (14, "3", "ПАЦИЕНТЫ", ("пациент", "пациента", "пациентов")),
                                     (15, "4", "ПРОЦЕДУРЫ", ("процедура", "процедуры", "процедур"))):

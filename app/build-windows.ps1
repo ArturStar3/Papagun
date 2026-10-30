@@ -1,7 +1,6 @@
 ﻿$ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $sidecarDir = Join-Path $PSScriptRoot 'src-tauri\binaries'
-$centers = Join-Path $projectRoot 'Исходники\Соответствие названий центров в презентации и эксель Nephrolife.xlsx'
 $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
 if (Test-Path -LiteralPath $cargoBin) { $env:PATH = "$cargoBin;$env:PATH" }
 if (-not (Get-Command link.exe -ErrorAction SilentlyContinue)) {
@@ -20,7 +19,7 @@ if (-not (Get-Command link.exe -ErrorAction SilentlyContinue)) {
     if (-not (Get-Command link.exe -ErrorAction SilentlyContinue)) { throw 'Не найден MSVC link.exe после настройки окружения.' }
 }
 
-foreach ($required in @((Join-Path $projectRoot 'excel_loading.ipynb'), $centers, (Join-Path $projectRoot 'resources\nephrolife_logo.jpg'))) {
+foreach ($required in @((Join-Path $projectRoot 'excel_loading.ipynb'), (Join-Path $projectRoot 'resources\nephrolife_logo.jpg'))) {
     if (-not (Test-Path -LiteralPath $required)) { throw "Не найден ресурс сборки: $required" }
 }
 
@@ -31,7 +30,7 @@ try {
         --specpath $PSScriptRoot --hidden-import pandas --hidden-import pptx `
         --add-data "$(Join-Path $projectRoot 'excel_loading.ipynb');." `
         --add-data "$(Join-Path $projectRoot 'resources\nephrolife_logo.jpg');." `
-        --add-data "$centers;." (Join-Path $PSScriptRoot 'engine.py')
+        (Join-Path $PSScriptRoot 'engine.py')
     if ($LASTEXITCODE -ne 0) { throw 'Не удалось собрать локальный обработчик.' }
 
     Copy-Item -LiteralPath (Join-Path $sidecarDir 'papagun-engine.exe') `
