@@ -2,8 +2,9 @@ import { useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { invoke } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import { Check, ChevronRight, FileSpreadsheet, FileText, FolderOpen, Layers3, Moon, Sun, X } from 'lucide-react';
+import { Check, ChevronRight, FileSpreadsheet, FileText, FolderOpen, Layers3, Moon, Save, Sun, Trash2, X } from 'lucide-react';
 import { ArticleTable, ChoicePanel, bookTitle, type ArticleGroup, type Book, type Catalog } from './selection';
+import { readTemplates, templateProblem, writeTemplates, type SelectionTemplate } from './templates';
 import './style.css';
 
 type Result = { output: string; slides: number; articles: number };
@@ -20,6 +21,10 @@ function App() {
   const [error, setError] = useState('');
   const [result, setResult] = useState<Result | null>(null);
   const [confirm, setConfirm] = useState(false);
+  const [templates, setTemplates] = useState<SelectionTemplate[]>(readTemplates);
+  const [templateName, setTemplateName] = useState('');
+  const [templateId, setTemplateId] = useState('');
+  const [templateNotice, setTemplateNotice] = useState('');
   const sourcesRef = useRef<HTMLElement>(null);
   const filtersRef = useRef<HTMLElement>(null);
   const exportRef = useRef<HTMLElement>(null);
@@ -45,10 +50,39 @@ function App() {
     setBusy('inspect'); setError(''); setResult(null);
     try {
       const next = await invoke<Catalog>('engine', { action: 'inspect', payload: files });
-      setCatalog(next); setMonths(next.availableMonths); setBranches(next.availableBranches); setArticles([]); setGroups([]);
+      setCatalog(next); setMonths(next.availableMonths); setBranches(next.availableBranches); setArticles([]); setGroups([]); setTemplateNotice('');
       requestAnimationFrame(() => filtersRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
     } catch (e) { setError(String(e)); }
     finally { setBusy(null); }
+  }
+  function saveTemplate() {
+    const name = templateName.trim();
+    if (!name || !catalog) return;
+    const entry: SelectionTemplate = { id: crypto.randomUUID(), name, months, branches, articles, groups };
+    const problem = templateProblem(entry, catalog);
+    if (problem) { setTemplateNotice(problem); return; }
+    try {
+      const next = [...templates, entry].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+      writeTemplates(next); setTemplates(next); setTemplateId(entry.id); setTemplateName('');
+      setTemplateNotice(`Шаблон «${name}» сохранён на этом компьютере.`);
+    } catch { setTemplateNotice('Не удалось сохранить шаблон. Проверьте доступное место приложения.'); }
+  }
+  function loadTemplate() {
+    const entry = templates.find(item => item.id === templateId);
+    if (!entry || !catalog) return;
+    const problem = templateProblem(entry, catalog);
+    if (problem) { setTemplateNotice(`${problem} Выберите другой шаблон или загрузите подходящие книги.`); return; }
+    setMonths(entry.months); setBranches(entry.branches); setArticles(entry.articles); setGroups(entry.groups);
+    setResult(null); setTemplateNotice(`Шаблон «${entry.name}» загружен.`);
+  }
+  function deleteTemplate() {
+    const entry = templates.find(item => item.id === templateId);
+    if (!entry || !window.confirm(`Удалить шаблон «${entry.name}»?`)) return;
+    try {
+      const next = templates.filter(item => item.id !== entry.id);
+      writeTemplates(next); setTemplates(next); setTemplateId('');
+      setTemplateNotice(`Шаблон «${entry.name}» удалён.`);
+    } catch { setTemplateNotice('Не удалось удалить шаблон. Повторите действие.'); }
   }
   async function generate() {
     closeConfirm();
@@ -65,6 +99,7 @@ function App() {
   const canGenerate = Boolean(catalog && months.length && branches.length && !busy);
 
   return <div className={`app ${theme}`}>
+    <a className="skip-link" href="#main-content">К содержимому</a>
     <aside className="sidebar" aria-label="Навигация">
       <div className="brand"><div className="brand-mark"><Layers3 size={21}/></div><div><strong>Papagun</strong><span>Конструктор отчётов</span></div></div>
       <nav className="nav">
@@ -74,7 +109,7 @@ function App() {
       </nav>
       <div className="sidebar-bottom"><div className="offline-dot"/> Локальная обработка</div>
     </aside>
-    <main className="workspace">
+    <main className="workspace" id="main-content" tabIndex={-1}>
       <header className="topbar"><span>Рабочая область</span><button className="icon-button" onClick={toggleTheme} aria-label={theme === 'light' ? 'Включить тёмную тему' : 'Включить светлую тему'} title="Сменить тему">{theme === 'light' ? <Moon size={19}/> : <Sun size={19}/>}</button></header>
       <div className="content">
         <div className="heading"><div><h1>Подготовка презентации</h1><p>Загрузите две книги бюджета, выберите данные и сохраните отчёт PowerPoint.</p></div><span className="version">NL / 2026</span></div>
@@ -88,7 +123,8 @@ function App() {
           <div className="section-actions"><button className="primary" onClick={inspect} disabled={!files.quantity || !files.financial || !!busy}>{busy === 'inspect' ? 'Чтение книг…' : catalog ? 'Обновить данные' : 'Загрузить данные'}</button>{catalog && <span className="inline-success"><Check size={16}/> Найдено {catalog.articles.length} позиций</span>}</div>
         </section>
         {catalog && <section className="section" ref={filtersRef} aria-labelledby="selection-title">
-          <div className="section-title"><span className="step">2</span><div><h2 id="selection-title">Данные отчёта</h2><p>Выберите месяцы и филиалы. Первые три слайда с аппаратами, пациентами и процедурами строятся автоматически; статьи ниже добавляют тематические слайды.</p></div></div>
+          <div className="section-title"><span className="step">2</span><div><h2 id="selection-title">Данные отчёта</h2><p>Выберите месяцы и филиалы. Статистика, транспортные расходы и расходы на питание добавляются автоматически; статьи ниже добавляют тематические слайды.</p></div></div>
+          <div className="template-panel"><div className="template-intro"><strong>Шаблоны выбора</strong><span>Сохраняют период, филиалы, статьи и группы. Книги Excel в шаблон не входят.</span></div><div className="template-controls"><label className="template-name"><span className="sr-only">Название нового шаблона</span><input name="template-name" autoComplete="off" value={templateName} onChange={event => setTemplateName(event.target.value)} maxLength={80} placeholder="Название нового шаблона…"/></label><button type="button" className="secondary" onClick={saveTemplate} disabled={!templateName.trim() || !months.length || !branches.length || !!busy}><Save size={16} aria-hidden="true"/> Сохранить</button><label className="template-select"><span className="sr-only">Сохранённый шаблон</span><select name="selection-template" value={templateId} onChange={event => setTemplateId(event.target.value)}><option value="">Выберите шаблон…</option>{templates.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><button type="button" className="secondary" onClick={loadTemplate} disabled={!templateId || !!busy}>Загрузить</button><button type="button" className="icon-button" aria-label="Удалить выбранный шаблон" title="Удалить выбранный шаблон" onClick={deleteTemplate} disabled={!templateId || !!busy}><Trash2 size={17} aria-hidden="true"/></button></div>{templateNotice && <p className="template-notice" role="status">{templateNotice}</p>}</div>
           <div className="selection-grid">
             <ChoicePanel title="Месяцы" values={catalog.months} available={catalog.availableMonths} selected={months} onChange={items => { setMonths(items); setResult(null); }}/>
             <ChoicePanel title="Филиалы" values={catalog.branches} available={catalog.availableBranches} selected={branches} onChange={items => { setBranches(items); setResult(null); }}/>

@@ -21,14 +21,6 @@ if not CENTERS.is_file():
 if not LOGO.is_file():
     LOGO = asset("resources/nephrolife_logo.jpg")
 MONTHS = ("январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь")
-BRANCHES = (
-    "Актобе", "Актобе АМЦ", "Астана Биржан Сал", "Астана Сарыарка", "Атырау", "Атырау Нурсая",
-    "Атырау Нурсая 2", "Караганда ЦАД", "Караганда Строителей", "Кентау", "Костанай", "Лисаковск",
-    "Рудный", "Павлодар Дюсенова", "Павлодар Павлова", "Экибастуз", "Петропавловск",
-    "Усть-Каменогорск (NL UK)", "Шымкент", "Шымкент Абая",
-)
-
-
 def checked_files(payload):
     quantity = Path(payload["quantity"])
     financial = Path(payload["financial"])
@@ -51,59 +43,70 @@ def group_for(code):
     return "Прочие статьи"
 
 
-def inspect(payload):
-    from openpyxl import load_workbook
+def read_branch_index(path):
+    import pandas as pd
 
+    index = pd.read_excel(path, sheet_name="Филиалы", dtype=str, keep_default_na=False, engine="openpyxl")
+    if list(index.columns[:2]) != ["Название филиала", "Название листа"]:
+        raise ValueError("На листе Филиалы ожидаются колонки Название филиала и Название листа.")
+    pairs = [(name.strip(), sheet.strip()) for name, sheet in index.iloc[:, :2].itertuples(index=False, name=None)
+             if name.strip() or sheet.strip()]
+    if not pairs or any(not name or not sheet for name, sheet in pairs):
+        raise ValueError("На листе Филиалы есть пустое название филиала или листа.")
+    names, sheets = zip(*pairs)
+    if len(set(names)) != len(names) or len(set(sheets)) != len(sheets):
+        raise ValueError("На листе Филиалы повторяется название филиала или листа.")
+    with pd.ExcelFile(path, engine="openpyxl") as book:
+        actual_sheets = set(book.sheet_names)
+    resolved = {}
+    for name, sheet in pairs:
+        if sheet not in actual_sheets:
+            matches = [candidate for candidate in actual_sheets
+                       if "".join(candidate.split()).casefold() == "".join(sheet.split()).casefold()]
+            if len(matches) != 1:
+                raise ValueError(f"Не найден однозначный лист для филиала {name}: {sheet}")
+            sheet = matches[0]
+        resolved[name] = sheet
+    if len(set(resolved.values())) != len(resolved):
+        raise ValueError("Несколько филиалов ссылаются на один лист.")
+    return resolved
+
+
+def inspect(payload):
     files = checked_files(payload)
-    items = {}
-    available = None
+    indexes = {key: read_branch_index(path) for key, path in files.items()}
+    branches = [name for name in indexes["quantity"] if name in indexes["financial"]]
+    if not branches:
+        raise ValueError("В обеих книгах нет общих филиалов из листа Филиалы.")
+
+    ns = notebook_namespace(files, branches, MONTHS)
+    quantity_df = ns["build_branches_dataframe"]("quantity", periods=MONTHS)[0]
+    financial_df = ns["build_branches_dataframe"]("financial", periods=MONTHS)[0]
+
     month_sets = []
-    for book, path in files.items():
-        wb = load_workbook(path, read_only=True, data_only=True)
-        try:
-            sheets = [name for name in BRANCHES if name in wb.sheetnames]
-            if not sheets:
-                raise ValueError(f"В книге {book} не найдены листы филиалов NL.")
-            available = set(sheets) if available is None else available & set(sheets)
-            # A month is selectable only when the source has actual values for it.
-            month_columns = (11, 15, 19, 23, 27, 31, 35, 39, 43, 47, 51, 55)
-            valid_months = set()
-            for branch in sheets:
-                ws = wb[branch]
-                for row in ws.iter_rows(min_row=9, max_row=141 if book == "quantity" else 193,
-                                        min_col=1, max_col=55, values_only=True):
-                    for month, column in zip(MONTHS, month_columns):
-                        value = row[column - 1]
-                        if isinstance(value, (int, float)) and not isinstance(value, bool):
-                            valid_months.add(month)
-                    if len(valid_months) == len(MONTHS):
-                        break
-            month_sets.append(valid_months)
-            if book != "quantity":
-                continue
-            limit = 141
-            for branch in sheets:
-                ws = wb[branch]
-                if str(ws["B6"].value).strip().casefold() != "код статей":
-                    raise ValueError(f"Не найден заголовок кодов: {book}, {branch}, B6.")
-                for row in ws.iter_rows(min_row=9, max_row=limit, min_col=2, max_col=3, values_only=True):
-                    code, name = row
-                    if code is None or name is None or not str(code).strip() or not str(name).strip():
-                        continue
-                    code, name = str(code).strip(), str(name).strip()
-                    if not re.fullmatch(r"\d+(?:\.\d+)*\.?", code):
-                        continue
-                    key = (code, name)
-                    items[key] = {"id": "\u001f".join(key), "code": code, "name": name, "group": group_for(code)}
-        finally:
-            wb.close()
-    ordered = sorted((item for item in items.values() if item["group"] != "Статьи до 200"),
-                     key=lambda x: (x["group"], x["code"], x["name"]))
-    branches = [b for b in BRANCHES if b in available]
-    # The reference report contains 19 centers; the twentieth source sheet lacks
-    # required September financial facts and has no approved missing-value rule.
-    report_branches = [b for b in branches if b != "Атырау Нурсая 2"]
-    return {"months": MONTHS, "availableMonths": [m for m in MONTHS[:9] if all(m in s for s in month_sets)],
+    for frame in (quantity_df, financial_df):
+        facts = frame.loc[frame["Факт по 1С"].map(
+            lambda value: isinstance(value, (int, float)) and not isinstance(value, bool))]
+        month_sets.append(set(facts["Месяц"]))
+
+    items = {}
+    for code_value, name_value in quantity_df[["Код статей", "Наименование статей"]].itertuples(index=False, name=None):
+        if code_value is None or name_value is None:
+            continue
+        code, name = str(code_value).strip(), str(name_value).strip()
+        if not code or not name or not re.fullmatch(r"\d+(?:\.\d+)*\.?", code):
+            continue
+        group = group_for(code)
+        if group not in ("Лекарственные препараты", "Изделия медицинского назначения",
+                         "Расходные медицинские материалы"):
+            continue
+        key = (code, name)
+        items[key] = {"id": "\u001f".join(key), "code": code, "name": name, "group": group}
+
+    ordered = sorted(items.values(), key=lambda item: (item["group"], item["code"], item["name"]))
+    report_branches = [name for name in branches if name not in ("Атырау Нурсая2", "Атырау Нурсая 2")]
+    return {"months": MONTHS, "availableMonths": [month for month in MONTHS[:9]
+            if all(month in month_set for month_set in month_sets)],
             "branches": branches, "availableBranches": report_branches, "articles": ordered}
 
 
@@ -117,13 +120,15 @@ def notebook_namespace(files, branches, months):
         if index == 5:
             source = source.replace("ROOT = Path.cwd()", "ROOT = Path.cwd()")
             source = source.replace("if not (ROOT / 'excel_loading.ipynb').is_file():", "if False:")
+        if index == 12:
+            ns["branch_maps"] = {key: read_branch_index(path) for key, path in files.items()}
         exec(compile(source, str(NOTEBOOK), "exec"), ns)
     ns["CENTERS"] = CENTERS
     ns["LOGO"] = LOGO
     ns["BRANCH_SHEETS"] = list(branches)
     ns["excel_files"] = files
     ns["workbooks"] = {
-        key: pd.read_excel(path, sheet_name=list(branches), header=None, dtype=object,
+        key: pd.read_excel(path, sheet_name=[ns["branch_maps"][key][branch] for branch in branches], header=None, dtype=object,
                            keep_default_na=False, engine="openpyxl")
         for key, path in files.items()
     }
@@ -263,12 +268,16 @@ def render_quarters(ns, models, title):
                                      drug=True, total=True)
         if count == 4:
             ns["set_plot_layout"](chart.chart, x=.01, y=.30, w=.98, h=.55)
+        elif count == 3:
+            ns["set_plot_layout"](chart.chart, x=.01, y=.38, w=.98, h=.48)
+        else:
+            ns["set_plot_layout"](chart.chart, x=.01, y=.28, w=.98, h=.62)
         ns["text_box"](slide, rows[0]["article"], .25, top + .025, 12.79, .22,
                        size=9, bold=True, color="0070C0", name="quarter_article")
         for j, row in enumerate(rows):
             center = .15 + 12.99 * (.01 + (j + .5) * .98 / len(rows))
             percent, color = ns["quarter_execution_info"](row["norm"], row["actual"])
-            panel = ns["text_box"](slide, percent, center - .325, top + (.22 if count == 4 else .12),
+            panel = ns["text_box"](slide, percent, center - .325, top + .30,
                                    .65, .18, size=9, bold=True, color=color, fill=ns["STYLE"]["gray"])
             panel.line.color.rgb = ns["RGBColor"](0, 0, 0)
     return ns["presentation_bytes"](deck)
@@ -286,7 +295,7 @@ def statistic_slide(ns, frame, provenance, branches, labels, months, row_number,
         if (len(selected) != len(period) or set(selected["Месяц"]) != set(period)
                 or selected["Месяц"].duplicated().any()
                 or not selected["Код статей"].map(lambda value: str(value).strip()).eq(code).all()
-                or not provenance.loc[selected.index, "Лист"].eq(branch).all()):
+                or not provenance.loc[selected.index, "Лист"].eq(ns["branch_maps"]["quantity"][branch]).all()):
             raise ValueError(f"Нет однозначных данных показателя «{title}» для филиала «{branch}».")
         number = ns["_procedure_number"] if row_number == 15 else ns["_number"]
         plan = sum((number(value) for value in selected["Утверждено"]), Decimal(0))
@@ -316,7 +325,7 @@ def generate(payload):
 
     files = checked_files(payload)
     months = tuple(m for m in MONTHS if m in payload["months"])
-    branches = tuple(b for b in BRANCHES if b in payload["branches"])
+    branches = tuple(b for b in read_branch_index(files["quantity"]) if b in payload["branches"])
     articles = payload.get("articles", [])
     custom_groups = payload.get("groups", [])
     if not months or not branches:
