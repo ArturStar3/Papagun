@@ -102,7 +102,7 @@ def inspect(payload):
 
     ordered = sorted(items.values(), key=lambda item: (item["group"], item["code"], item["name"]))
     report_branches = [name for name in branches if name not in ("Атырау Нурсая2", "Атырау Нурсая 2")]
-    return {"months": MONTHS, "availableMonths": [month for month in MONTHS[:9]
+    return {"months": MONTHS, "availableMonths": [month for month in MONTHS
             if all(month in month_set for month_set in month_sets)],
             "branches": branches, "availableBranches": report_branches, "articles": ordered}
 
@@ -143,6 +143,17 @@ def notebook_namespace(files, branches, months):
             mapping[key] = branch
         return mapping
     ns["slide5_center_map"] = current_center_map
+    original_drug_execution_text = ns["drug_execution_text"]
+    original_quarter_execution_info = ns["quarter_execution_info"]
+
+    def app_drug_execution_text(norm, actual):
+        return "0%" if actual == 0 else original_drug_execution_text(norm, actual)
+
+    def app_quarter_execution_info(norm, actual):
+        return ("0%", "000000") if norm == 0 else original_quarter_execution_info(norm, actual)
+
+    ns["drug_execution_text"] = app_drug_execution_text
+    ns["quarter_execution_info"] = app_quarter_execution_info
     return ns
 
 
@@ -229,7 +240,8 @@ def quarter_models(ns, frame, provenance, branches, months, book, items):
                              plan=norm, norm=norm, actual=actual, difference=norm - actual))
         norm = sum((r["norm"] for r in rows), Decimal(0))
         actual = sum((r["actual"] for r in rows), Decimal(0))
-        rows.append(dict(label="9 месяцев" if tuple(months) == MONTHS[:9] else "Выбранный период", article=item["title"], article_code=item["key"],
+        total_label = "9 месяцев" if tuple(months) == MONTHS[:9] else ("12 месяцев" if tuple(months) == MONTHS else "Итого")
+        rows.append(dict(label=total_label, article=item["title"], article_code=item["key"],
                          plan=norm, norm=norm, actual=actual, difference=norm - actual))
         result.append(rows)
     return result
@@ -241,17 +253,21 @@ def render_quarters(ns, models, title):
     ns["add_header"](slide, title, width=11.8)
     count = len(models)
     for index, rows in enumerate(models):
+        quarter_count = len(rows) - 1
+        if not 1 <= quarter_count <= 4:
+            raise ValueError("Квартальный слайд требует от одного до четырёх кварталов и итог.")
+        slots = [None] * (4 - quarter_count) + rows[:-1] + [rows[-1]]
         if count == 4:
             top, height = .65 + index * 1.67, 1.63
         elif count == 3:
             top, height = .65 + index * 2.16, 2.04
         else:
             top, height = ((.65, 3.10) if index == 0 else (3.88, 3.12))
-        series = [(name, [r[key] for r in rows], color) for name, key, color in
+        series = [(name, [r[key] if r is not None else None for r in slots], color) for name, key, color in
                   zip(("Факт по норме", "Факт по 1С", "отк:"), ("norm", "actual", "difference"),
                       (ns["STYLE"]["teal"], ns["STYLE"]["gray"], ns["STYLE"]["gray"]))]
-        chart = ns["numeric_chart"](slide, [r["label"] for r in rows], series,
-                                     .15, top, 12.99, height, fmt="#,##0", compact_base=len(rows),
+        chart = ns["numeric_chart"](slide, [r["label"] if r is not None else "" for r in slots], series,
+                                      .15, top, 12.99, height, fmt="#,##0", compact_base=5,
                                      drug=True, total=True)
         if count == 4:
             ns["set_plot_layout"](chart.chart, x=.01, y=.30, w=.98, h=.55)
@@ -262,7 +278,8 @@ def render_quarters(ns, models, title):
         ns["text_box"](slide, rows[0]["article"], .25, top + .025, 12.79, .22,
                        size=9, bold=True, color="0070C0", name="quarter_article")
         for j, row in enumerate(rows):
-            center = .15 + 12.99 * (.01 + (j + .5) * .98 / len(rows))
+            slot = 4 - quarter_count + j if j < quarter_count else 4
+            center = .15 + 12.99 * (.01 + (slot + .5) * .98 / 5)
             percent, color = ns["quarter_execution_info"](row["norm"], row["actual"])
             panel = ns["text_box"](slide, percent, center - .325, top + .30,
                                    .65, .18, size=9, bold=True, color=color, fill=ns["STYLE"]["gray"])
