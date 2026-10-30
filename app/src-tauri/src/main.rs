@@ -2,6 +2,8 @@
 
 use std::io::Write;
 use std::process::{Command, Stdio};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 #[tauri::command]
 async fn engine(action: String, payload: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -17,6 +19,8 @@ async fn engine(action: String, payload: serde_json::Value) -> Result<serde_json
             let sidecar = executable.with_file_name("papagun-engine.exe");
             Command::new(sidecar)
         };
+        #[cfg(windows)]
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW; stdin/stdout remain piped.
         let mut child = command.arg(action).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
             .spawn().map_err(|e| format!("Не удалось запустить обработку: {e}"))?;
         let input = serde_json::to_vec(&payload).map_err(|e| e.to_string())?;

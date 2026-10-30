@@ -100,7 +100,7 @@ function App() {
 
   return <div className={`app ${theme}`}>
     <a className="skip-link" href="#main-content">К содержимому</a>
-    <aside className="sidebar" aria-label="Навигация">
+    <aside className="sidebar" aria-label="Навигация" inert={!!busy}>
       <div className="brand"><div className="brand-mark"><Layers3 size={21}/></div><div><strong>Papagun</strong><span>Конструктор отчётов</span></div></div>
       <nav className="nav">
         <button onClick={() => sourcesRef.current?.scrollIntoView({ behavior: 'smooth' })}><FileSpreadsheet size={18}/> Источники <ChevronRight size={15}/></button>
@@ -109,11 +109,10 @@ function App() {
       </nav>
       <div className="sidebar-bottom"><div className="offline-dot"/> Локальная обработка</div>
     </aside>
-    <main className="workspace" id="main-content" tabIndex={-1}>
+    <main className="workspace" id="main-content" tabIndex={-1} inert={!!busy} aria-busy={!!busy}>
       <header className="topbar"><span>Рабочая область</span><button className="icon-button" onClick={toggleTheme} aria-label={theme === 'light' ? 'Включить тёмную тему' : 'Включить светлую тему'} title="Сменить тему">{theme === 'light' ? <Moon size={19}/> : <Sun size={19}/>}</button></header>
       <div className="content">
         <div className="heading"><div><h1>Подготовка презентации</h1><p>Загрузите две книги бюджета, выберите данные и сохраните отчёт PowerPoint.</p></div><span className="version">NL / 2026</span></div>
-        <span className="sr-only" role="status">{busy === 'inspect' ? 'Чтение книг' : busy === 'generate' ? 'Создание презентации' : ''}</span>
         <section className="section" ref={sourcesRef} aria-labelledby="sources-title">
           <div className="section-title"><span className="step">1</span><div><h2 id="sources-title">Исходные книги</h2><p>Выберите количественный и финансовый бюджет в формате .xlsx.</p></div></div>
           <div className="source-grid">{(['quantity', 'financial'] as Book[]).map(book => <div className="source-card" key={book}>
@@ -134,6 +133,18 @@ function App() {
         {error && <div className="error" role="alert"><span>{error}</span><button aria-label="Закрыть сообщение" onClick={() => setError('')}><X size={17}/></button></div>}
       </div>
     </main>
+    {busy && <div className="processing-backdrop" role="status" aria-live="polite" aria-atomic="true">
+      <div className="processing-card">
+        <div className="thinking-steps" aria-hidden="true">
+          <span className="thinking-node"><FileSpreadsheet size={20}/></span>
+          <span className="thinking-node"><Layers3 size={20}/></span>
+          <span className="thinking-node"><FileText size={20}/></span>
+          <span className="thinking-signal"/>
+        </div>
+        <h2>{busy === 'inspect' ? 'Изучаем книги…' : 'Собираем презентацию…'}</h2>
+        <p>{busy === 'inspect' ? 'Проверяем данные и готовим список для выбора.' : 'Проверяем показатели и размещаем слайды.'}</p>
+      </div>
+    </div>}
     {confirm && <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) closeConfirm(); }}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title" onKeyDown={e => {
       if (e.key === 'Escape') closeConfirm();
       if (e.key === 'Tab') {

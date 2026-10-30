@@ -45,3 +45,14 @@
 .skip-link{position:fixed;z-index:20;top:8px;left:8px;padding:9px 13px;background:var(--surface);color:var(--text);border:2px solid var(--accent);border-radius:7px;transform:translateY(-150%)}
 .skip-link:focus{transform:translateY(0)}
 .modal{overscroll-behavior:contain}
+
+.processing-backdrop{position:fixed;inset:0;z-index:20;display:grid;place-items:center;padding:20px;background:rgba(12,28,45,.44);backdrop-filter:blur(3px)}
+.processing-card{width:min(100%,390px);padding:30px 28px 29px;text-align:center;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:14px;box-shadow:0 24px 70px rgba(10,25,44,.24)}
+.thinking-steps{width:204px;height:42px;margin:0 auto 25px;display:flex;align-items:center;justify-content:space-between;position:relative;color:var(--accent)}
+.thinking-steps::before{content:"";position:absolute;left:21px;right:21px;top:20px;height:2px;background:var(--line)}
+.thinking-node{position:relative;z-index:1;width:42px;height:42px;display:grid;place-items:center;border:1px solid var(--line);border-radius:11px;background:var(--surface)}
+.thinking-node:nth-child(2){background:var(--soft);border-color:var(--accent)}
+.thinking-signal{position:absolute;z-index:2;left:16px;top:16px;width:10px;height:10px;border-radius:50%;background:var(--accent);opacity:0;animation:thinking-travel 2.4s ease-in-out infinite}
+.processing-card h2{margin:0 0 8px;font-size:18px;line-height:1.3;text-wrap:balance}.processing-card p{margin:0;color:var(--muted);font-size:13px;line-height:1.5}
+@keyframes thinking-travel{0%{transform:translateX(0);opacity:0}12%{opacity:1}85%{opacity:1}100%{transform:translateX(162px);opacity:0}}
+@media(prefers-reduced-motion:reduce){.thinking-signal{animation:none;opacity:1;transform:translateX(81px)}.processing-backdrop{backdrop-filter:none}}
