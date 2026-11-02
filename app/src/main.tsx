@@ -20,6 +20,8 @@ function App() {
   const [busy, setBusy] = useState<'inspect' | 'generate' | null>(null);
   const [error, setError] = useState('');
   const [result, setResult] = useState<Result | null>(null);
+  const [folderError, setFolderError] = useState('');
+  const [openingFolder, setOpeningFolder] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [templates, setTemplates] = useState<SelectionTemplate[]>(readTemplates);
   const [templateName, setTemplateName] = useState('');
@@ -88,13 +90,20 @@ function App() {
     closeConfirm();
     const output = await save({ defaultPath: 'Papagun_отчёт.pptx', filters: [{ name: 'PowerPoint', extensions: ['pptx'] }] });
     if (!output) return;
-    setBusy('generate'); setError(''); setResult(null);
+    setBusy('generate'); setError(''); setFolderError(''); setResult(null);
     try {
       const next = await invoke<Result>('engine', { action: 'generate', payload: { ...files, months, branches, articles, groups, output } });
       setResult(next);
       requestAnimationFrame(() => exportRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
     } catch (e) { setError(String(e)); }
     finally { setBusy(null); }
+  }
+  async function openOutputFolder() {
+    if (!result || openingFolder) return;
+    setOpeningFolder(true); setFolderError('');
+    try { await invoke('open_output_folder', { path: result.output }); }
+    catch (e) { setFolderError(String(e)); }
+    finally { setOpeningFolder(false); }
   }
   const canGenerate = Boolean(catalog && months.length && branches.length && !busy);
 
@@ -129,7 +138,7 @@ function App() {
             <ChoicePanel title="Филиалы" values={catalog.branches} available={catalog.availableBranches} selected={branches} onChange={items => { setBranches(items); setResult(null); }}/>
           </div>
           <ArticleTable items={catalog.articles} selected={articles} groups={groups} onChange={items => { setArticles(items); setResult(null); }} onGroupsChange={items => { setGroups(items); setResult(null); }}/></section>}
-        {catalog && <section className="section result-section" ref={exportRef} aria-labelledby="export-title"><div className="section-title"><span className="step">3</span><div><h2 id="export-title">Презентация</h2><p>Порядок: три статистических слайда, выбранные разделы статей, затем два слайда расходов. Диаграммы остаются редактируемыми.</p></div></div><div className="export-bar"><div><strong>{articles.length + groups.length} показателей из статей</strong><span>{months.length} мес. · {branches.length} фил. · 5 обязательных слайдов</span></div><button className="primary" ref={generateButtonRef} onClick={() => setConfirm(true)} disabled={!canGenerate}>{busy === 'generate' ? 'Создание презентации…' : 'Создать презентацию'}</button></div>{result && <div className="success" role="status"><Check size={20}/><div><strong>Презентация сохранена</strong><span>{result.slides} слайдов · {result.output}</span></div></div>}</section>}
+        {catalog && <section className="section result-section" ref={exportRef} aria-labelledby="export-title"><div className="section-title"><span className="step">3</span><div><h2 id="export-title">Презентация</h2><p>Порядок: три статистических слайда, выбранные разделы статей, затем два слайда расходов. Диаграммы остаются редактируемыми.</p></div></div><div className="export-bar"><div><strong>{articles.length + groups.length} показателей из статей</strong><span>{months.length} мес. · {branches.length} фил. · 5 обязательных слайдов</span></div><button className="primary" ref={generateButtonRef} onClick={() => setConfirm(true)} disabled={!canGenerate}>{busy === 'generate' ? 'Создание презентации…' : 'Создать презентацию'}</button></div>{result && <div className="result-feedback"><div className="success" role="status" aria-live="polite"><Check size={20} aria-hidden="true"/><div className="success-copy"><strong>Презентация сохранена</strong><span>{result.slides} слайдов · {result.output}</span></div><button type="button" className="secondary open-folder" onClick={openOutputFolder} disabled={openingFolder || !!busy}><FolderOpen size={16} aria-hidden="true"/>{openingFolder ? 'Открываем папку…' : 'Открыть папку'}</button></div>{folderError && <p className="folder-error" role="alert">{folderError}</p>}</div>}</section>}
         {error && <div className="error" role="alert"><span>{error}</span><button aria-label="Закрыть сообщение" onClick={() => setError('')}><X size={17}/></button></div>}
       </div>
     </main>

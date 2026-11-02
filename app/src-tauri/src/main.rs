@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::io::Write;
+use std::path::Path;
 use std::process::{Command, Stdio};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -33,10 +34,24 @@ async fn engine(action: String, payload: serde_json::Value) -> Result<serde_json
     }).await.map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+fn open_output_folder(path: String) -> Result<(), String> {
+    let report = Path::new(&path);
+    if !report.is_file() || report.extension().and_then(|extension| extension.to_str()).map_or(true, |extension| !extension.eq_ignore_ascii_case("pptx")) {
+        return Err("Файл презентации не найден. Проверьте, что он не был перемещён или удалён.".into());
+    }
+    let folder = report.parent().ok_or("Не удалось определить папку презентации.")?;
+    Command::new("explorer.exe")
+        .arg(folder)
+        .spawn()
+        .map_err(|_| "Не удалось открыть папку в Проводнике Windows.".to_string())?;
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![engine])
+        .invoke_handler(tauri::generate_handler![engine, open_output_folder])
         .run(tauri::generate_context!())
         .expect("Papagun failed to start");
 }

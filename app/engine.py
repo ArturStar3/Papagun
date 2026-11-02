@@ -290,7 +290,7 @@ def render_quarters(ns, models, title):
 def statistic_slide(ns, frame, provenance, branches, labels, months, row_number, code, title, forms):
     from decimal import Decimal
 
-    period = (months[-1],) if row_number != 15 else tuple(months)
+    period = tuple(months)
     model = []
     for branch, label in zip(branches, labels):
         selected = frame.loc[frame["Наименование филиала"].eq(branch)
