@@ -48,7 +48,13 @@ def main():
         "articles": [article], "groups": [], "output": str(OUTPUT),
     })
     presentation = Presentation(OUTPUT)
-    assert len(presentation.slides) == response["slides"] == 8
+    assert len(presentation.slides) == response["slides"] == 12
+    for slide in list(presentation.slides)[-4:]:
+        charts = [shape.chart for shape in slide.shapes if shape.has_chart]
+        assert len(charts) == 3, "Expected three expense shares per new slide"
+        for chart in charts:
+            values = list(chart.series[0].values)
+            assert values == sorted(values, reverse=True), "Expense shares are not sorted"
     for slide in (presentation.slides[0], presentation.slides[1]):
         title = next(shape.text for shape in slide.shapes if shape.has_text_frame
                      and ("АППАРАТЫ:" in shape.text or "ПАЦИЕНТЫ:" in shape.text))
@@ -64,7 +70,7 @@ def main():
     verifier = presentation._element.find(qn("p:modifyVerifier"))
     assert verifier is not None and verifier.get("spinCount") == "100000"
     assert all(hashlib.sha256(path.read_bytes()).digest() == before[name] for name, path in BOOKS.items())
-    print(f"PASS: {len(presentation.slides)} slides, five diagonal notices per slide; write protection set; source books unchanged")
+    print(f"PASS: {len(presentation.slides)} slides, twelve sorted expense charts, five diagonal notices per slide; write protection set; source books unchanged")
 
 
 if __name__ == "__main__":

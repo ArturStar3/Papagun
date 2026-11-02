@@ -321,6 +321,107 @@ def statistic_slide(ns, frame, provenance, branches, labels, months, row_number,
     return ns["presentation_bytes"](deck)
 
 
+SHARE_SPECS = (
+    ("Лекарственные препараты", "211."),
+    ("Изделия медицинского назначения", "212."),
+    ("Расходные медицинские материалы", "213."),
+    ("Диагностирование пациентов", ("214.00",)),
+    ("Утилизация медицинских отходов", ("219.00",)),
+    ("Затраты на питание пациентов", ("222.00",)),
+    ("Транспортные расходы", ("223.01", "223.02", "223.03", "223.04")),
+    ("Командировочные расходы", ("224.01", "224.02", "224.03")),
+    ("Коммунальные услуги", ("228.01", "228.02", "228.03", "228.04", "228.05")),
+    ("Аренда помещения", ("232.00",)),
+    ("Общий фонд оплаты труда", ("235.00",)),
+    ("Оплата труда", ("235.01",)),
+)
+
+
+def financial_share_models(ns, frame, provenance, branches, months):
+    """Calculate each expense share from Fact 1C, then sort branches by the share."""
+    from decimal import Decimal, InvalidOperation
+    import pandas as pd
+
+    month_set = set(months)
+    branch_set = set(branches)
+    selected = frame.loc[frame["Наименование филиала"].isin(branch_set)
+                         & frame["Месяц"].isin(month_set)]
+    by_period = {(branch, month): [] for branch in branches for month in months}
+    expected_sheets = ns["branch_maps"]["financial"]
+    for index, row in selected.iterrows():
+        branch, month = row["Наименование филиала"], row["Месяц"]
+        if provenance.at[index, "Лист"] != expected_sheets[branch]:
+            raise ValueError(f"Неверный лист финансового показателя для филиала «{branch}».")
+        code = str(row["Код статей"]).strip() if pd.notna(row["Код статей"]) else ""
+        by_period[(branch, month)].append((code, str(row["Наименование статей"]).strip(), row["Факт по 1С"]))
+
+    def amount(value, branch, month, title):
+        if pd.isna(value) or (isinstance(value, str) and not value.strip()):
+            return None
+        try:
+            number = Decimal(str(value))
+        except InvalidOperation as error:
+            raise ValueError(f"Нечисловой факт 1С «{title}» для филиала «{branch}», месяц «{month}».") from error
+        if not number.is_finite():
+            raise ValueError(f"Неконечный факт 1С «{title}» для филиала «{branch}», месяц «{month}».")
+        return number
+
+    models = []
+    for title, selector in SHARE_SPECS:
+        rows = []
+        for branch in branches:
+            numerator = denominator = Decimal(0)
+            for month in months:
+                entries = by_period[(branch, month)]
+                totals = [value for code, name, value in entries if name == "ВСЕГО РЕАЛИЗАЦИЯ"]
+                if len(totals) != 1:
+                    raise ValueError(f"Статья «ВСЕГО РЕАЛИЗАЦИЯ» неоднозначна для филиала «{branch}», месяц «{month}».")
+                denominator += amount(totals[0], branch, month, "ВСЕГО РЕАЛИЗАЦИЯ") or Decimal(0)
+                if isinstance(selector, str):
+                    values = [value for code, _, value in entries if code.startswith(selector)]
+                    if not values:
+                        raise ValueError(f"Нет подразделов {selector} для филиала «{branch}», месяц «{month}».")
+                else:
+                    values = []
+                    for required_code in selector:
+                        matches = [value for code, _, value in entries if code == required_code]
+                        if len(matches) != 1:
+                            raise ValueError(f"Код {required_code} неоднозначен для филиала «{branch}», месяц «{month}».")
+                        values.extend(matches)
+                for value in values:
+                    numerator += amount(value, branch, month, title) or Decimal(0)
+            percent = numerator / denominator * 100 if denominator else Decimal(0)
+            rows.append({"branch": branch, "label": branch, "numerator": numerator,
+                         "realization": denominator, "percent": percent})
+        models.append((title, sorted(rows, key=lambda row: (-row["percent"], row["branch"]))))
+    return models
+
+
+def financial_share_slides(ns, models):
+    from pptx.util import Pt
+
+    result = []
+    for first in range(0, len(models), 3):
+        deck = ns["new_presentation"]()
+        slide = deck.slides.add_slide(deck.slide_layouts[6])
+        for position, (title, rows) in enumerate(models[first:first + 3]):
+            top = .40 + position * 2.33
+            chart = ns["numeric_chart"](
+                slide, [row["label"] for row in rows],
+                [("Факт по 1С / всего реализация", [row["percent"] for row in rows], ns["STYLE"]["teal"])],
+                .12, top, 13.05, 2.08, fmt='0.0"%"', compact_base=19, compact_labels=True,
+            )
+            fraction = .96 * min(1, max(.25, len(rows) / 19))
+            ns["set_plot_layout"](chart.chart, x=(1 - fraction) / 2, y=.20, w=fraction, h=.58)
+            chart.chart.category_axis.tick_labels.font.size = Pt(7)
+            chart.chart.category_axis._element.get_or_add_txPr().xpath('./a:bodyPr')[0].set('rot', '0')
+            chart.chart.series[0].data_labels.font.size = Pt(9)
+            ns["text_box"](slide, title, .36, top + .02, 3.95, .29,
+                           size=13, bold=True, color="000000", fill="ADADAD", name="Показатель доли")
+        result.append(ns["presentation_bytes"](deck))
+    return result
+
+
 def generate(payload):
     import hashlib
     from io import BytesIO
@@ -434,6 +535,8 @@ def generate(payload):
     payloads.append(render_quarters(ns, quarter_models(ns, financial, financial_provenance, labels, months,
                                                        "financial", quarter_items),
                                     "ФИНАНСОВЫЕ ПОКАЗАТЕЛИ: по кварталам 2026 г. (тыс. тенге)"))
+    payloads.extend(financial_share_slides(
+        ns, financial_share_models(ns, financial, financial_provenance, branches, months)))
     result = ns["combine_created_slides"](payloads)
     with ZipFile(BytesIO(result)) as archive:
         if archive.testzip() is not None:
