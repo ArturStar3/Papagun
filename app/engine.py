@@ -409,7 +409,7 @@ def financial_share_slides(ns, models):
             chart = ns["numeric_chart"](
                 slide, [row["label"] for row in rows],
                 [("Факт по 1С / всего реализация", [row["percent"] for row in rows], ns["STYLE"]["teal"])],
-                .12, top + .24, 13.05, 1.84, fmt='0.0"%"', compact_base=19, compact_labels=True,
+                .12, top + .24, 13.05, 1.84, fmt='0.0', compact_base=19, compact_labels=True,
             )
             fraction = .96 * min(1, max(.25, len(rows) / 19))
             ns["set_plot_layout"](chart.chart, x=(1 - fraction) / 2, y=.18, w=fraction, h=.34)
@@ -424,6 +424,8 @@ def financial_share_slides(ns, models):
                 axis.append(tick_skip[0])
             tick_skip[0].set('val', '1')
             chart.chart.series[0].data_labels.font.size = Pt(9)
+            for label_body in chart.chart.series[0]._element.xpath('./c:dLbls/c:txPr/a:bodyPr'):
+                label_body.set('rot', '0')
             ns["text_box"](slide, title, .36, top + .02, 3.95, .29,
                            size=13, bold=True, color="000000", fill="ADADAD", name="Показатель доли")
         result.append(ns["presentation_bytes"](deck))

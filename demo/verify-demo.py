@@ -60,6 +60,8 @@ def main():
             axis = chart.category_axis._element
             assert axis.xpath('./c:tickLblSkip')[0].get('val') == '1'
             assert axis.get_or_add_txPr().xpath('./a:bodyPr')[0].get('rot') == '-2700000'
+            assert chart.series[0].data_labels.number_format == '0.0'
+            assert chart.series[0]._element.xpath('./c:dLbls/c:txPr/a:bodyPr')[0].get('rot') == '0'
     deviation_charts = [shape.chart for slide in list(presentation.slides)[:-4]
                         for shape in slide.shapes if shape.has_chart and len(shape.chart.series) == 3
                         and len(shape.chart.plots[0].categories) == len(catalog["availableBranches"])]
