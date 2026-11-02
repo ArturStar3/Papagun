@@ -12,7 +12,8 @@ from watermark import NOTICE, WATERMARK_ANGLE, WATERMARK_COUNT
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMO = ROOT / "demo"
-WORKER = DEMO / "dist" / "papagun-demo-engine.exe"
+WORKER = max((DEMO / "dist").glob("**/papagun-demo-engine.exe"),
+             key=lambda path: path.stat().st_mtime_ns)
 OUTPUT = DEMO / ".build" / "demo-qa.pptx"
 BOOKS = {
     "quantity": ROOT / "Исходники" / "NL_Кол. Бюджет.xlsx",
@@ -44,7 +45,7 @@ def main():
     response = call("generate", {
         **request,
         "months": months,
-        "branches": catalog["availableBranches"][:1],
+        "branches": catalog["availableBranches"],
         "articles": [article], "groups": [], "output": str(OUTPUT),
     })
     presentation = Presentation(OUTPUT)
@@ -55,6 +56,17 @@ def main():
         for chart in charts:
             values = list(chart.series[0].values)
             assert values == sorted(values, reverse=True), "Expense shares are not sorted"
+            assert len(chart.plots[0].categories) == len(catalog["availableBranches"]), "Branch labels were skipped"
+            axis = chart.category_axis._element
+            assert axis.xpath('./c:tickLblSkip')[0].get('val') == '1'
+            assert axis.get_or_add_txPr().xpath('./a:bodyPr')[0].get('rot') == '-2700000'
+    deviation_charts = [shape.chart for slide in list(presentation.slides)[:-4]
+                        for shape in slide.shapes if shape.has_chart and len(shape.chart.series) == 3
+                        and len(shape.chart.plots[0].categories) == len(catalog["availableBranches"])]
+    assert len(deviation_charts) >= 3
+    for chart in deviation_charts:
+        values = list(chart.series[2].values)
+        assert values == sorted(values, reverse=True), "Deviation chart is not sorted by deviation"
     for slide in (presentation.slides[0], presentation.slides[1]):
         title = next(shape.text for shape in slide.shapes if shape.has_text_frame
                      and ("АППАРАТЫ:" in shape.text or "ПАЦИЕНТЫ:" in shape.text))
@@ -70,7 +82,7 @@ def main():
     verifier = presentation._element.find(qn("p:modifyVerifier"))
     assert verifier is not None and verifier.get("spinCount") == "100000"
     assert all(hashlib.sha256(path.read_bytes()).digest() == before[name] for name, path in BOOKS.items())
-    print(f"PASS: {len(presentation.slides)} slides, twelve sorted expense charts, five diagonal notices per slide; write protection set; source books unchanged")
+    print(f"PASS: {len(presentation.slides)} slides, twelve complete 45-degree expense charts, sorted deviations, five diagonal notices per slide; write protection set; source books unchanged")
 
 
 if __name__ == "__main__":

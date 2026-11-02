@@ -409,17 +409,50 @@ def financial_share_slides(ns, models):
             chart = ns["numeric_chart"](
                 slide, [row["label"] for row in rows],
                 [("Факт по 1С / всего реализация", [row["percent"] for row in rows], ns["STYLE"]["teal"])],
-                .12, top, 13.05, 2.08, fmt='0.0"%"', compact_base=19, compact_labels=True,
+                .12, top + .24, 13.05, 1.84, fmt='0.0"%"', compact_base=19, compact_labels=True,
             )
             fraction = .96 * min(1, max(.25, len(rows) / 19))
-            ns["set_plot_layout"](chart.chart, x=(1 - fraction) / 2, y=.20, w=fraction, h=.58)
-            chart.chart.category_axis.tick_labels.font.size = Pt(7)
-            chart.chart.category_axis._element.get_or_add_txPr().xpath('./a:bodyPr')[0].set('rot', '0')
+            ns["set_plot_layout"](chart.chart, x=(1 - fraction) / 2, y=.18, w=fraction, h=.34)
+            chart.chart.category_axis.tick_labels.font.size = Pt(6)
+            axis = chart.chart.category_axis._element
+            body = axis.get_or_add_txPr().xpath('./a:bodyPr')[0]
+            body.set('rot', '-2700000')
+            body.set('wrap', 'none')
+            tick_skip = axis.xpath('./c:tickLblSkip')
+            if not tick_skip:
+                tick_skip = [ns["OxmlElement"]('c:tickLblSkip')]
+                axis.append(tick_skip[0])
+            tick_skip[0].set('val', '1')
             chart.chart.series[0].data_labels.font.size = Pt(9)
             ns["text_box"](slide, title, .36, top + .02, 3.95, .29,
                            size=13, bold=True, color="000000", fill="ADADAD", name="Показатель доли")
         result.append(ns["presentation_bytes"](deck))
     return result
+
+
+def save_pptx(data, output):
+    """Save atomically; keep an existing report when Windows denies its replacement."""
+    fd, temp_path = tempfile.mkstemp(suffix=".pptx", dir=output.parent)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+        try:
+            os.replace(temp_path, output)
+            return output
+        except PermissionError:
+            if not output.is_file():
+                raise
+            for number in range(2, 1002):
+                alternative = output.with_name(f"{output.stem} ({number}){output.suffix}")
+                try:
+                    os.rename(temp_path, alternative)
+                    return alternative
+                except FileExistsError:
+                    continue
+            raise FileExistsError("Не найдено свободное имя для нового отчёта в выбранной папке.")
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
 
 
 def generate(payload):
@@ -511,7 +544,7 @@ def generate(payload):
                 payloads.append(ns["render_drug_models"](
                     models, heading=heading, series_names=("План", "Факт", "отк:") if book == "quantity"
                     else ("Факт по норме", "Факт по 1С", "отк:"), financial=book == "financial",
-                    articles=selectors))
+                    articles=selectors, sort_by_difference=True))
             models = quarter_models(ns, quantity, quantity_provenance, labels, months, "quantity", block)
             payloads.append(render_quarters(ns, models, "РАСХОДЫ " + category_titles[category] + ": по кварталам 2026 г. (количество)"))
 
@@ -525,7 +558,7 @@ def generate(payload):
     payloads.append(ns["render_drug_models"](
         expense_models, heading="РАСХОДЫ: " + period_caption(months) + " 2026 г. (тыс. тенге)",
         series_names=("Факт по норме", "Факт по 1С", "отк:"), financial=True,
-        articles=[(item["key"], item["title"]) for item in expense_items]))
+        articles=[(item["key"], item["title"]) for item in expense_items], sort_by_difference=True))
     quarter_items = [dict(title=label, key=" + ".join(codes), components=[(code, "") for code in codes],
                           selectors={"financial": list(codes)}) for label, codes in (
                               ("Расходы на транспорт", ("223.01", "223.02")),
@@ -546,15 +579,9 @@ def generate(payload):
     for key, path in files.items():
         if hashlib.sha256(path.read_bytes()).digest() != before[key]:
             raise ValueError("Исходная книга изменилась во время обработки.")
-    fd, temp_path = tempfile.mkstemp(suffix=".pptx", dir=output.parent)
-    try:
-        with os.fdopen(fd, "wb") as stream:
-            stream.write(result)
-        os.replace(temp_path, output)
-    finally:
-        if os.path.exists(temp_path):
-            os.unlink(temp_path)
-    return {"output": str(output), "slides": len(payloads), "articles": len(used)}
+    saved_output = save_pptx(result, output)
+    return {"output": str(saved_output), "alternateOutput": saved_output != output,
+            "slides": len(payloads), "articles": len(used)}
 
 
 if __name__ == "__main__":

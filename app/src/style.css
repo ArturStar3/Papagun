@@ -58,3 +58,4 @@
 @media(prefers-reduced-motion:reduce){.thinking-signal{animation:none;opacity:1;transform:translateX(81px)}.processing-backdrop{backdrop-filter:none}}
 
 .success-copy{min-width:0;flex:1}.success .open-folder{flex:none;margin-left:auto;color:var(--text)}.folder-error{margin:8px 0 0;padding-left:31px;color:var(--error);font-size:12px;line-height:1.45;overflow-wrap:anywhere}@media(max-width:510px){.success{align-items:flex-start;flex-wrap:wrap}.success-copy{flex-basis:calc(100% - 31px)}.success .open-folder{margin-left:31px}}
+.success-copy .copy-notice{display:block;margin-top:4px;color:var(--muted)}

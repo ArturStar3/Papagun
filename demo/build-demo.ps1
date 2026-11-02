@@ -80,9 +80,31 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Не удалось собрать demo-приложение.' }
 } finally { Pop-Location }
 
-Copy-Item -LiteralPath (Join-Path $releaseDir 'papagun-demo.exe') -Destination (Join-Path $destination 'papagun-demo.exe') -Force
-Copy-Item -LiteralPath (Join-Path $sidecarDir 'papagun-demo-engine.exe') -Destination (Join-Path $destination 'papagun-demo-engine.exe') -Force
 $installer = Get-ChildItem -LiteralPath (Join-Path $releaseDir 'bundle\nsis') -Filter '*-setup.exe' | Select-Object -First 1
 if (-not $installer) { throw 'Demo-установщик не найден.' }
 Copy-Item -LiteralPath $installer.FullName -Destination (Join-Path $destination 'Papagun-Demo-Setup.exe') -Force
+
+$portableFiles = @('papagun-demo.exe', 'papagun-demo-engine.exe')
+$portableReady = $true
+foreach ($name in $portableFiles) {
+    $path = Join-Path $destination $name
+    if (-not (Test-Path -LiteralPath $path)) { continue }
+    try {
+        $handle = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        $handle.Dispose()
+    } catch {
+        $portableReady = $false
+        break
+    }
+}
+if ($portableReady) {
+    Copy-Item -LiteralPath (Join-Path $releaseDir 'papagun-demo.exe') -Destination (Join-Path $destination 'papagun-demo.exe') -Force
+    Copy-Item -LiteralPath (Join-Path $sidecarDir 'papagun-demo-engine.exe') -Destination (Join-Path $destination 'papagun-demo-engine.exe') -Force
+} else {
+    $portableDir = Join-Path $destination ('portable-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    New-Item -ItemType Directory -Path $portableDir -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $releaseDir 'papagun-demo.exe') -Destination (Join-Path $portableDir 'papagun-demo.exe')
+    Copy-Item -LiteralPath (Join-Path $sidecarDir 'papagun-demo-engine.exe') -Destination (Join-Path $portableDir 'papagun-demo-engine.exe')
+    Write-Warning "Запущенная demo-версия не позволяет обновить переносимые EXE в dist. Новая пара: $portableDir"
+}
 Write-Output "Demo: $destination"
