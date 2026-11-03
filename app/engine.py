@@ -40,46 +40,122 @@ def group_for(code):
     return "Прочие статьи"
 
 
-def read_branch_index(path):
-    import pandas as pd
-
-    index = pd.read_excel(path, sheet_name="Филиалы", dtype=str, keep_default_na=False, engine="openpyxl")
-    if list(index.columns[:2]) != ["Название филиала", "Название листа"]:
-        raise ValueError("На листе Филиалы ожидаются колонки Название филиала и Название листа.")
-    pairs = [(name.strip(), sheet.strip()) for name, sheet in index.iloc[:, :2].itertuples(index=False, name=None)
-             if name.strip() or sheet.strip()]
-    if not pairs or any(not name or not sheet for name, sheet in pairs):
-        raise ValueError("На листе Филиалы есть пустое название филиала или листа.")
-    names, sheets = zip(*pairs)
-    if len(set(names)) != len(names) or len(set(sheets)) != len(sheets):
-        raise ValueError("На листе Филиалы повторяется название филиала или листа.")
-    with pd.ExcelFile(path, engine="openpyxl") as book:
-        actual_sheets = set(book.sheet_names)
-    resolved = {}
-    for name, sheet in pairs:
-        if sheet not in actual_sheets:
-            matches = [candidate for candidate in actual_sheets
-                       if "".join(candidate.split()).casefold() == "".join(sheet.split()).casefold()]
-            if len(matches) != 1:
-                raise ValueError(f"Не найден однозначный лист для филиала {name}: {sheet}")
-            sheet = matches[0]
-        resolved[name] = sheet
-    if len(set(resolved.values())) != len(resolved):
-        raise ValueError("Несколько филиалов ссылаются на один лист.")
-    return resolved
+APP_CELL_IDS = (
+    "papagun-001", "4c50e724", "papagun-007", "papagun-010", "papagun-011",
+    "f3520855", "e9a9c483", "papagun-assembly",
+)
+REQUIRED_NAMES = (
+    "read_branch_index", "build_branches_dataframe", "_drug_models_by_key", "render_drug_models",
+    "combine_created_slides", "quarter_execution_info", "drug_execution_text", "_center_key",
+    "numeric_chart", "new_presentation", "presentation_bytes", "text_box", "set_plot_layout",
+    "OxmlElement", "STYLE", "RGBColor", "_number", "_procedure_number", "_counted",
+    "add_header", "add_summary",
+)
+ROOT_CHECK = "if not (ROOT / 'excel_loading.ipynb').is_file():"
+SELECTION_ERROR = "Список месяцев или филиалов содержит неизвестные или повторяющиеся значения."
 
 
-def inspect(payload):
-    files = checked_files(payload)
-    indexes = {key: read_branch_index(path) for key, path in files.items()}
-    branches = [name for name in indexes["quantity"] if name in indexes["financial"]]
+def notebook_sources():
+    cells = json.loads(NOTEBOOK.read_text(encoding="utf-8"))["cells"]
+    found = {}
+    for cell in cells:
+        cid = cell.get("id")
+        if cid not in APP_CELL_IDS:
+            continue
+        if cid in found:
+            raise ValueError(f"Повторяющийся идентификатор ячейки {cid}.")
+        found[cid] = "".join(cell["source"])
+    missing = [cid for cid in APP_CELL_IDS if cid not in found]
+    if missing:
+        raise ValueError("В notebook нет ячеек: " + ", ".join(missing))
+    return found
+
+
+def exec_notebook_cell(ns, cid, source):
+    if cid == "4c50e724":
+        if source.count(ROOT_CHECK) != 1:
+            raise ValueError("Не найдена проверка корня notebook.")
+        source = source.replace(ROOT_CHECK, "if False:", 1)
+    exec(compile(source, str(NOTEBOOK), "exec"), ns)
+
+
+def require_names(ns):
+    missing = [name for name in REQUIRED_NAMES if name not in ns]
+    if missing:
+        raise ValueError("Notebook не определил: " + ", ".join(missing))
+
+
+def bind_center_map(ns, branches):
+    def current_center_map():
+        mapping = {}
+        for branch in branches:
+            key = ns["_center_key"](branch)
+            if key in mapping and mapping[key] != branch:
+                raise ValueError(f"Названия филиалов не различаются после нормализации: {mapping[key]} и {branch}.")
+            mapping[key] = branch
+        return mapping
+
+    ns["slide5_center_map"] = current_center_map
+
+
+def bind_execution_text(ns):
+    original_drug_execution_text = ns["drug_execution_text"]
+    original_quarter_execution_info = ns["quarter_execution_info"]
+
+    def app_drug_execution_text(norm, actual):
+        return "0%" if actual == 0 else original_drug_execution_text(norm, actual)
+
+    def app_quarter_execution_info(norm, actual):
+        return ("0%", "000000") if norm == 0 else original_quarter_execution_info(norm, actual)
+
+    ns["drug_execution_text"] = app_drug_execution_text
+    ns["quarter_execution_info"] = app_quarter_execution_info
+
+
+def prepare_namespace():
+    """Load notebook functions and stop before opening Excel when a name is missing."""
+    sources = notebook_sources()
+    ns = {"__name__": "papagun_notebook", "branch_maps": {"quantity": {}}}
+    for cid in APP_CELL_IDS:
+        exec_notebook_cell(ns, cid, sources[cid])
+    require_names(ns)
+    ns["LOGO"] = LOGO
+    bind_execution_text(ns)
+    return ns
+
+
+def common_branches(ns, files):
+    branch_maps = {key: ns["read_branch_index"](path) for key, path in files.items()}
+    branches = [name for name in branch_maps["quantity"] if name in branch_maps["financial"]]
     if not branches:
         raise ValueError("В обеих книгах нет общих филиалов из листа Филиалы.")
+    ns["branch_maps"] = branch_maps
+    return branches
 
-    ns = notebook_namespace(files, branches, MONTHS)
-    quantity_df = ns["build_branches_dataframe"]("quantity", periods=MONTHS)[0]
-    financial_df = ns["build_branches_dataframe"]("financial", periods=MONTHS)[0]
 
+def read_frames(ns, files, branches):
+    import pandas as pd
+
+    ns["BRANCH_SHEETS"] = list(branches)
+    ns["excel_files"] = files
+    ns["workbooks"] = {
+        key: pd.read_excel(path, sheet_name=[ns["branch_maps"][key][branch] for branch in branches],
+                           header=None, dtype=object, keep_default_na=False, engine="openpyxl")
+        for key, path in files.items()
+    }
+    ns["REPORT_PERIODS"] = MONTHS
+    bind_center_map(ns, branches)
+    return {book: ns["build_branches_dataframe"](book, periods=MONTHS)[:2] for book in files}
+
+
+def narrow_frames(frame, provenance, branches, months):
+    chosen = frame.index[frame["Наименование филиала"].isin(branches) & frame["Месяц"].isin(months)]
+    return frame.loc[chosen], provenance.loc[chosen]
+
+
+def catalog_from(branches, frames):
+    quantity_df = frames["quantity"][0]
+    financial_df = frames["financial"][0]
     month_sets = []
     for frame in (quantity_df, financial_df):
         facts = frame.loc[frame["Факт по 1С"].map(
@@ -107,54 +183,11 @@ def inspect(payload):
             "branches": branches, "availableBranches": report_branches, "articles": ordered}
 
 
-def notebook_namespace(files, branches, months):
-    import pandas as pd
-
-    cells = json.loads(NOTEBOOK.read_text(encoding="utf-8"))["cells"]
-    ns = {"__name__": "papagun_notebook"}
-    for index in (3, 5, 12):
-        source = "".join(cells[index]["source"])
-        if index == 5:
-            source = source.replace("ROOT = Path.cwd()", "ROOT = Path.cwd()")
-            source = source.replace("if not (ROOT / 'excel_loading.ipynb').is_file():", "if False:")
-        if index == 12:
-            ns["branch_maps"] = {key: read_branch_index(path) for key, path in files.items()}
-        exec(compile(source, str(NOTEBOOK), "exec"), ns)
-    ns["LOGO"] = LOGO
-    ns["BRANCH_SHEETS"] = list(branches)
-    ns["excel_files"] = files
-    ns["workbooks"] = {
-        key: pd.read_excel(path, sheet_name=[ns["branch_maps"][key][branch] for branch in branches], header=None, dtype=object,
-                           keep_default_na=False, engine="openpyxl")
-        for key, path in files.items()
-    }
-    ns["REPORT_PERIODS"] = tuple(months)
-    source = "".join(cells[13]["source"])
-    source = source[:source.index("quantity_df, quantity_provenance")]
-    exec(compile(source, str(NOTEBOOK), "exec"), ns)
-    for index in (17, 19, 21):
-        exec(compile("".join(cells[index]["source"]), str(NOTEBOOK), "exec"), ns)
-    def current_center_map():
-        mapping = {}
-        for branch in branches:
-            key = ns["_center_key"](branch)
-            if key in mapping and mapping[key] != branch:
-                raise ValueError(f"Названия филиалов не различаются после нормализации: {mapping[key]} и {branch}.")
-            mapping[key] = branch
-        return mapping
-    ns["slide5_center_map"] = current_center_map
-    original_drug_execution_text = ns["drug_execution_text"]
-    original_quarter_execution_info = ns["quarter_execution_info"]
-
-    def app_drug_execution_text(norm, actual):
-        return "0%" if actual == 0 else original_drug_execution_text(norm, actual)
-
-    def app_quarter_execution_info(norm, actual):
-        return ("0%", "000000") if norm == 0 else original_quarter_execution_info(norm, actual)
-
-    ns["drug_execution_text"] = app_drug_execution_text
-    ns["quarter_execution_info"] = app_quarter_execution_info
-    return ns
+def inspect(payload):
+    files = checked_files(payload)
+    ns = prepare_namespace()
+    branches = common_branches(ns, files)
+    return catalog_from(branches, read_frames(ns, files, branches))
 
 
 def financial_selector(frame, code, quantity_name, branches, months):
@@ -464,26 +497,34 @@ def generate(payload):
     from pptx import Presentation
 
     files = checked_files(payload)
-    months = tuple(m for m in MONTHS if m in payload["months"])
-    branches = tuple(b for b in read_branch_index(files["quantity"]) if b in payload["branches"])
+    requested_months = payload["months"]
+    requested_branches = payload["branches"]
     articles = payload.get("articles", [])
     custom_groups = payload.get("groups", [])
-    if not months or not branches:
+    months = tuple(month for month in MONTHS if month in requested_months)
+    if not months or not requested_branches:
         raise ValueError("Выберите хотя бы один месяц и филиал.")
-    if len(months) != len(set(payload["months"])) or len(branches) != len(set(payload["branches"])):
-        raise ValueError("Список месяцев или филиалов содержит неизвестные или повторяющиеся значения.")
-    available_catalog = inspect(payload)
-    if any(m not in available_catalog["availableMonths"] for m in months) or any(b not in available_catalog["availableBranches"] for b in branches):
-        raise ValueError("Выбран месяц или филиал без полного набора данных для этого отчёта.")
+    if len(requested_months) != len(set(requested_months)) or len(months) != len(set(requested_months)):
+        raise ValueError(SELECTION_ERROR)
     output = Path(payload["output"])
     if output.suffix.lower() != ".pptx" or output.resolve() in (p.resolve() for p in files.values()):
         raise ValueError("Укажите выходной файл .pptx, отличный от исходных книг.")
-    output.parent.mkdir(parents=True, exist_ok=True)
     before = {key: hashlib.sha256(path.read_bytes()).digest() for key, path in files.items()}
-    ns = notebook_namespace(files, branches, months)
-    frames = {}
-    for book in files:
-        frames[book] = ns["build_branches_dataframe"](book, periods=months)[:2]
+    ns = prepare_namespace()
+    common = common_branches(ns, files)
+    branches = tuple(branch for branch in ns["branch_maps"]["quantity"] if branch in requested_branches)
+    if not branches:
+        raise ValueError("Выберите хотя бы один месяц и филиал.")
+    if (len(requested_branches) != len(set(requested_branches))
+            or len(branches) != len(set(requested_branches))):
+        raise ValueError(SELECTION_ERROR)
+    full_frames = read_frames(ns, files, common)
+    available_catalog = catalog_from(common, full_frames)
+    if any(month not in available_catalog["availableMonths"] for month in months) or any(
+            branch not in available_catalog["availableBranches"] for branch in branches):
+        raise ValueError("Выбран месяц или филиал без полного набора данных для этого отчёта.")
+    bind_center_map(ns, branches)
+    frames = {book: narrow_frames(*full_frames[book], branches, months) for book in files}
     catalog = {item["id"]: item for item in available_catalog["articles"]}
     used = set()
 
@@ -581,6 +622,7 @@ def generate(payload):
     for key, path in files.items():
         if hashlib.sha256(path.read_bytes()).digest() != before[key]:
             raise ValueError("Исходная книга изменилась во время обработки.")
+    output.parent.mkdir(parents=True, exist_ok=True)
     saved_output = save_pptx(result, output)
     return {"output": str(saved_output), "alternateOutput": saved_output != output,
             "slides": len(payloads), "articles": len(used)}
