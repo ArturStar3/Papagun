@@ -103,7 +103,7 @@ def bind_execution_text(ns):
     original_quarter_execution_info = ns["quarter_execution_info"]
 
     def app_drug_execution_text(norm, actual):
-        return "0%" if actual == 0 else original_drug_execution_text(norm, actual)
+        return "0%" if norm == 0 else original_drug_execution_text(norm, actual)
 
     def app_quarter_execution_info(norm, actual):
         return ("0%", "000000") if norm == 0 else original_quarter_execution_info(norm, actual)
@@ -221,9 +221,17 @@ def article_groups(items):
 
 def period_caption(months):
     indexes = [MONTHS.index(month) for month in months]
+    if len(indexes) == 12 and indexes == list(range(12)):
+        return "за год"
+    if len(indexes) == 6 and indexes in (list(range(6)), list(range(6, 12))):
+        return "за полугодие"
+    if len(indexes) == 3 and indexes[0] % 3 == 0 and indexes == list(range(indexes[0], indexes[0] + 3)):
+        return "за квартал"
+    if len(months) == 2:
+        return " и ".join(months)
     if indexes == list(range(indexes[0], indexes[-1] + 1)):
         return months[0] if len(months) == 1 else f"{months[0]}–{months[-1]}"
-    return f"{len(months)} выбранных месяцев"
+    return ", ".join(months)
 
 
 def combined_model(ns, frame, provenance, branches, months, book, item):
@@ -309,13 +317,13 @@ def render_quarters(ns, models, title):
         else:
             ns["set_plot_layout"](chart.chart, x=.01, y=.28, w=.98, h=.62)
         ns["text_box"](slide, rows[0]["article"], .25, top + .025, 12.79, .22,
-                       size=9, bold=True, color="0070C0", name="quarter_article")
+                       size=11, bold=True, color="0070C0", name="quarter_article")
         for j, row in enumerate(rows):
             slot = 4 - quarter_count + j if j < quarter_count else 4
             center = .15 + 12.99 * (.01 + (slot + .5) * .98 / 5)
             percent, color = ns["quarter_execution_info"](row["norm"], row["actual"])
             panel = ns["text_box"](slide, percent, center - .325, top + .30,
-                                   .65, .18, size=9, bold=True, color=color, fill=ns["STYLE"]["gray"])
+                                   .65, .18, size=10, bold=True, color=color, fill=ns["STYLE"]["gray"])
             panel.line.color.rgb = ns["RGBColor"](0, 0, 0)
     return ns["presentation_bytes"](deck)
 
@@ -589,7 +597,7 @@ def generate(payload):
                     else ("Факт по норме", "Факт по 1С", "отк:"), financial=book == "financial",
                     articles=selectors, sort_by_difference=True))
             models = quarter_models(ns, quantity, quantity_provenance, labels, months, "quantity", block)
-            payloads.append(render_quarters(ns, models, "РАСХОДЫ " + category_titles[category] + ": по кварталам 2026 г. (количество)"))
+            payloads.append(render_quarters(ns, models, "РАСХОДЫ " + category_titles[category] + ": по кварталам, " + period_caption(months) + " 2026 г. (количество)"))
 
     financial, financial_provenance = frames["financial"]
     expense_items = [dict(title=label, key=" + ".join(codes), components=[(code, "") for code in codes],
@@ -610,7 +618,7 @@ def generate(payload):
                               ("Возмещение расходов на питание", ("222.01",)))]
     payloads.append(render_quarters(ns, quarter_models(ns, financial, financial_provenance, labels, months,
                                                        "financial", quarter_items),
-                                    "ФИНАНСОВЫЕ ПОКАЗАТЕЛИ: по кварталам 2026 г. (тыс. тенге)"))
+                                    "ФИНАНСОВЫЕ ПОКАЗАТЕЛИ: по кварталам, " + period_caption(months) + " 2026 г. (тыс. тенге)"))
     payloads.extend(financial_share_slides(
         ns, financial_share_models(ns, financial, financial_provenance, branches, months)))
     result = ns["combine_created_slides"](payloads)
