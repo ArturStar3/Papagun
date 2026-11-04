@@ -6,7 +6,7 @@ export type Article = { id: string; code: string; name: string; group: string };
 export type Catalog = { months: string[]; availableMonths: string[]; branches: string[]; availableBranches: string[]; articles: Article[] };
 export type ArticleGroup = { id: string; title: string; articles: string[] };
 export const bookTitle: Record<Book, string> = { quantity: 'Количественный бюджет', financial: 'Финансовый бюджет' };
-const categories = ['Лекарственные препараты', 'Изделия медицинского назначения', 'Расходные медицинские материалы'];
+const categoryOrder = ['Лекарственные препараты', 'Изделия медицинского назначения', 'Расходные медицинские материалы'];
 
 export function ChoicePanel({ title, values, available = values, selected, onChange }: {
   title: string; values: string[]; available?: string[]; selected: string[]; onChange: (items: string[]) => void;
@@ -42,14 +42,17 @@ export function ArticleTable({ items, selected, groups, onChange, onGroupsChange
   items: Article[]; selected: string[]; groups: ArticleGroup[];
   onChange: (items: string[]) => void; onGroupsChange: (items: ArticleGroup[]) => void;
 }) {
-  const [category, setCategory] = useState(categories[0]);
+  const [category, setCategory] = useState('');
   const [query, setQuery] = useState('');
   const [groupTitle, setGroupTitle] = useState('');
   const deferredQuery = useDeferredValue(query);
+  const categories = useMemo(() => [...new Set(items.map(item => item.group))]
+    .sort((a, b) => categoryOrder.indexOf(a) - categoryOrder.indexOf(b)), [items]);
+  const activeCategory = categories.includes(category) ? category : categories[0] ?? '';
   const groupIds = new Set(groups.flatMap(group => group.articles));
-  const current = useMemo(() => items.filter(item => item.group === category &&
-    `${item.code} ${item.name}`.toLocaleLowerCase('ru').includes(deferredQuery.trim().toLocaleLowerCase('ru'))), [items, category, deferredQuery]);
-  const selectedHere = selected.filter(id => items.some(item => item.id === id && item.group === category));
+  const current = useMemo(() => items.filter(item => item.group === activeCategory &&
+    `${item.code} ${item.name}`.toLocaleLowerCase('ru').includes(deferredQuery.trim().toLocaleLowerCase('ru'))), [items, activeCategory, deferredQuery]);
+  const selectedHere = selected.filter(id => items.some(item => item.id === id && item.group === activeCategory));
   const selectableHere = current.filter(item => !groupIds.has(item.id) && !['211', '212', '213'].includes(item.code)).map(item => item.id);
   const selectedVisible = selectableHere.filter(id => selected.includes(id));
   function selectAllHere() { onChange([...new Set([...selected, ...selectableHere])]); }
@@ -66,7 +69,7 @@ export function ArticleTable({ items, selected, groups, onChange, onGroupsChange
     setGroupTitle('');
   }
   return <div className="article-panel"><div className="article-head"><div><h3>Статьи и показатели</h3><p>Статистика и расходы добавляются автоматически. Здесь выберите статьи для количественной, финансовой и квартальной страниц.</p></div></div>
-    <div className="category-tabs" role="group" aria-label="Раздел статей">{categories.map(name => <button key={name} aria-pressed={category === name}
+    <div className="category-tabs" role="group" aria-label="Раздел статей">{categories.map(name => <button key={name} aria-pressed={activeCategory === name}
       className={category === name ? 'active' : ''} onClick={() => { setCategory(name); setQuery(''); }}>{name}<span>{items.filter(item => item.group === name).length}</span></button>)}</div>
     <div className="category-content"><div className="category-tools"><label className="search"><Search size={17} aria-hidden="true"/><span className="sr-only">Поиск статьи</span><input name="article-search" autoComplete="off" value={query} onChange={event => setQuery(event.target.value)} placeholder="Код или название…"/></label>
       <div className="category-selection"><span className="category-count">Выбрано в разделе: {selectedHere.length}</span>

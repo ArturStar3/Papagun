@@ -173,6 +173,11 @@ def catalog_from(branches, frames):
         if group not in ("Лекарственные препараты", "Изделия медицинского назначения",
                          "Расходные медицинские материалы"):
             continue
+        finance_codes = financial_df["Код статей"].map(
+            lambda value: value.strip() if isinstance(value, str) else value)
+        finance_names = set(financial_df.loc[finance_codes.eq(code), "Наименование статей"].dropna())
+        if not finance_names or (name not in finance_names and len(finance_names) != 1):
+            continue
         key = (code, name)
         items[key] = {"id": "\u001f".join(key), "code": code, "name": name, "group": group}
 
@@ -181,6 +186,13 @@ def catalog_from(branches, frames):
     return {"months": MONTHS, "availableMonths": [month for month in MONTHS
             if all(month in month_set for month_set in month_sets)],
             "branches": branches, "availableBranches": report_branches, "articles": ordered}
+
+
+def has_default_components(frame, branches, months, codes):
+    selected = frame.loc[frame["Наименование филиала"].isin(branches) & frame["Месяц"].isin(months)]
+    found = {value.strip() if isinstance(value, str) else str(value)
+             for value in selected["Код статей"].dropna()}
+    return bool(found.intersection(codes))
 
 
 def inspect(payload):
@@ -330,6 +342,12 @@ def render_quarters(ns, models, title):
 
 def statistic_slide(ns, frame, provenance, branches, labels, months, row_number, code, title, forms):
     from decimal import Decimal
+    import pandas as pd
+
+    def number_or_zero(value, number):
+        if pd.isna(value) or isinstance(value, (str, bool)):
+            return Decimal(0)
+        return number(value)
 
     period = tuple(months)
     model = []
@@ -343,8 +361,8 @@ def statistic_slide(ns, frame, provenance, branches, labels, months, row_number,
                 or not provenance.loc[selected.index, "Лист"].eq(ns["branch_maps"]["quantity"][branch]).all()):
             raise ValueError(f"Нет однозначных данных показателя «{title}» для филиала «{branch}».")
         number = ns["_procedure_number"] if row_number == 15 else ns["_number"]
-        plan = sum((number(value) for value in selected["Утверждено"]), Decimal(0))
-        actual = sum((number(value) for value in selected["Факт по 1С"]), Decimal(0))
+        plan = sum((number_or_zero(value, number) for value in selected["Утверждено"]), Decimal(0))
+        actual = sum((number_or_zero(value, number) for value in selected["Факт по 1С"]), Decimal(0))
         model.append(dict(label=label, plan=plan, actual=actual))
     deck = ns["new_presentation"]()
     slide = deck.slides.add_slide(deck.slide_layouts[6])
@@ -408,26 +426,32 @@ def financial_share_models(ns, frame, provenance, branches, months):
         return number
 
     models = []
+    has_realization = any(name == "ВСЕГО РЕАЛИЗАЦИЯ"
+                          for entries in by_period.values() for _, name, _ in entries)
+    if not has_realization:
+        return models
     for title, selector in SHARE_SPECS:
+        has_components = any(
+            code.startswith(selector) if isinstance(selector, str) else code in selector
+            for branch in branches for month in months
+            for code, _, _ in by_period[(branch, month)]
+        )
+        if not has_components:
+            continue
         rows = []
         for branch in branches:
             numerator = denominator = Decimal(0)
             for month in months:
                 entries = by_period[(branch, month)]
                 totals = [value for code, name, value in entries if name == "ВСЕГО РЕАЛИЗАЦИЯ"]
-                if len(totals) != 1:
-                    raise ValueError(f"Статья «ВСЕГО РЕАЛИЗАЦИЯ» неоднозначна для филиала «{branch}», месяц «{month}».")
-                denominator += amount(totals[0], branch, month, "ВСЕГО РЕАЛИЗАЦИЯ") or Decimal(0)
+                denominator += sum((amount(value, branch, month, "ВСЕГО РЕАЛИЗАЦИЯ") or Decimal(0)
+                                    for value in totals), Decimal(0))
                 if isinstance(selector, str):
                     values = [value for code, _, value in entries if code.startswith(selector)]
-                    if not values:
-                        raise ValueError(f"Нет подразделов {selector} для филиала «{branch}», месяц «{month}».")
                 else:
                     values = []
                     for required_code in selector:
                         matches = [value for code, _, value in entries if code == required_code]
-                        if len(matches) != 1:
-                            raise ValueError(f"Код {required_code} неоднозначен для филиала «{branch}», месяц «{month}».")
                         values.extend(matches)
                 for value in values:
                     numerator += amount(value, branch, month, title) or Decimal(0)
@@ -603,22 +627,26 @@ def generate(payload):
     expense_items = [dict(title=label, key=" + ".join(codes), components=[(code, "") for code in codes],
                           selectors={"financial": list(codes)}) for label, codes in (
                               ("Транспортные расходы", ("223.01", "223.02", "223.03", "223.04")),
-                              ("Расходы на питание", ("222.00", "222.01")))]
+                              ("Расходы на питание", ("222.00", "222.01")))
+                     if has_default_components(financial, branches, months, codes)]
     expense_models = [combined_model(ns, financial, financial_provenance, labels, months, "financial", item)
                       for item in expense_items]
-    payloads.append(ns["render_drug_models"](
-        expense_models, heading="РАСХОДЫ: " + period_caption(months) + " 2026 г. (тыс. тенге)",
-        series_names=("Факт по норме", "Факт по 1С", "отк:"), financial=True,
-        articles=[(item["key"], item["title"]) for item in expense_items], sort_by_difference=True))
+    if expense_models:
+        payloads.append(ns["render_drug_models"](
+            expense_models, heading="РАСХОДЫ: " + period_caption(months) + " 2026 г. (тыс. тенге)",
+            series_names=("Факт по норме", "Факт по 1С", "отк:"), financial=True,
+            articles=[(item["key"], item["title"]) for item in expense_items], sort_by_difference=True))
     quarter_items = [dict(title=label, key=" + ".join(codes), components=[(code, "") for code in codes],
                           selectors={"financial": list(codes)}) for label, codes in (
                               ("Расходы на транспорт", ("223.01", "223.02")),
                               ("Возмещение транспортных расходов пациентам", ("223.04",)),
                               ("Расходы на питание", ("222.00",)),
-                              ("Возмещение расходов на питание", ("222.01",)))]
-    payloads.append(render_quarters(ns, quarter_models(ns, financial, financial_provenance, labels, months,
-                                                       "financial", quarter_items),
-                                    "ФИНАНСОВЫЕ ПОКАЗАТЕЛИ: по кварталам, " + period_caption(months) + " 2026 г. (тыс. тенге)"))
+                              ("Возмещение расходов на питание", ("222.01",)))
+                     if has_default_components(financial, branches, months, codes)]
+    if quarter_items:
+        payloads.append(render_quarters(ns, quarter_models(ns, financial, financial_provenance, labels, months,
+                                                           "financial", quarter_items),
+                                        "ФИНАНСОВЫЕ ПОКАЗАТЕЛИ: по кварталам, " + period_caption(months) + " 2026 г. (тыс. тенге)"))
     payloads.extend(financial_share_slides(
         ns, financial_share_models(ns, financial, financial_provenance, branches, months)))
     result = ns["combine_created_slides"](payloads)
