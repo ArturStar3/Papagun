@@ -154,6 +154,8 @@ def narrow_frames(frame, provenance, branches, months):
 
 
 def catalog_from(branches, frames):
+    import pandas as pd
+
     quantity_df = frames["quantity"][0]
     financial_df = frames["financial"][0]
     month_sets = []
@@ -162,8 +164,13 @@ def catalog_from(branches, frames):
             lambda value: isinstance(value, (int, float)) and not isinstance(value, bool))]
         month_sets.append(set(facts["Месяц"]))
 
+    finance_names_by_code = {}
+    for code_value, name_value in financial_df[["Код статей", "Наименование статей"]].itertuples(index=False, name=None):
+        if isinstance(code_value, str) and not pd.isna(name_value):
+            finance_names_by_code.setdefault(code_value.strip(), set()).add(name_value)
+
     items = {}
-    for code_value, name_value in quantity_df[["Код статей", "Наименование статей"]].itertuples(index=False, name=None):
+    for code_value, name_value in quantity_df[["Код статей", "Наименование статей"]].drop_duplicates().itertuples(index=False, name=None):
         if code_value is None or name_value is None:
             continue
         code, name = str(code_value).strip(), str(name_value).strip()
@@ -173,9 +180,7 @@ def catalog_from(branches, frames):
         if group not in ("Лекарственные препараты", "Изделия медицинского назначения",
                          "Расходные медицинские материалы"):
             continue
-        finance_codes = financial_df["Код статей"].map(
-            lambda value: value.strip() if isinstance(value, str) else value)
-        finance_names = set(financial_df.loc[finance_codes.eq(code), "Наименование статей"].dropna())
+        finance_names = finance_names_by_code.get(code, set())
         if not finance_names or (name not in finance_names and len(finance_names) != 1):
             continue
         key = (code, name)
