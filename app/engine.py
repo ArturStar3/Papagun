@@ -547,10 +547,13 @@ def financial_share_slides(ns, models):
                 label.font.size = Pt(11)
                 label.font.bold = True
                 color = "FFFF00" if index < 2 else ("FFFFFF" if rows[index - 2]["percent"] > fact_reference else "000000")
+                # Keep every value visible when its column cannot hold an 11 pt label.
+                short_column = abs(float(values[index])) / (axis_maximum - axis_minimum) * plot_height_pt < 14
+                if short_column:
+                    label.position = XL_DATA_LABEL_POSITION.OUTSIDE_END
+                    if color == "FFFFFF":
+                        color = "666666"
                 label.font.color.rgb = RGBColor.from_string(color)
-                # A zero or very short column cannot contain an 11 pt label.
-                if abs(float(values[index])) / (axis_maximum - axis_minimum) * plot_height_pt < 10:
-                    point.data_label._dLbl.xpath('./c:showVal')[0].set('val', '0')
                 for label_body in series._element.xpath(f'./c:dLbls/c:dLbl[c:idx/@val="{index}"]/c:txPr/a:bodyPr'):
                     label_body.set('rot', '0')
                     label_body.set('wrap', 'none')
