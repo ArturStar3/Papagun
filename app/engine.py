@@ -251,6 +251,21 @@ def period_caption(months):
     return ", ".join(months)
 
 
+def total_period_caption(months):
+    indexes = [MONTHS.index(month) for month in months]
+    if len(indexes) == 1:
+        return months[0]
+    if indexes == list(range(12)):
+        return "год"
+    if len(indexes) == 6 and indexes in (list(range(6)), list(range(6, 12))):
+        return f"{1 if indexes[0] == 0 else 2} полугодие"
+    if len(indexes) == 3 and indexes[0] % 3 == 0 and indexes == list(range(indexes[0], indexes[0] + 3)):
+        return f"{indexes[0] // 3 + 1} квартал"
+    count = len(indexes)
+    form = "месяца" if count in (2, 3, 4) else "месяцев"
+    return f"{count} {form}" if indexes == list(range(count)) else f"{count} выбранных {form}"
+
+
 def combined_model(ns, frame, provenance, branches, months, book, item):
     from decimal import Decimal
 
@@ -401,85 +416,110 @@ SHARE_SPECS = (
 )
 
 
-def financial_share_models(ns, frame, provenance, branches, months):
-    """Calculate each expense share from Fact 1C, then sort branches by the share."""
+def financial_share_models(ns, frame, provenance, branches, months, *, average_branches=None):
+    """Use the full reference set for means and selected branches for columns."""
     from decimal import Decimal, InvalidOperation
     import pandas as pd
 
+    average_branches = tuple(branches if average_branches is None else average_branches)
+    if not average_branches:
+        raise ValueError("Для средних Плана и Факта нужен хотя бы один филиал.")
+    calculation_branches = tuple(dict.fromkeys((*branches, *average_branches)))
     month_set = set(months)
-    branch_set = set(branches)
+    branch_set = set(calculation_branches)
     selected = frame.loc[frame["Наименование филиала"].isin(branch_set)
                          & frame["Месяц"].isin(month_set)]
-    by_period = {(branch, month): [] for branch in branches for month in months}
+    by_period = {(branch, month): [] for branch in calculation_branches for month in months}
     expected_sheets = ns["branch_maps"]["financial"]
     for index, row in selected.iterrows():
         branch, month = row["Наименование филиала"], row["Месяц"]
         if provenance.at[index, "Лист"] != expected_sheets[branch]:
             raise ValueError(f"Неверный лист финансового показателя для филиала «{branch}».")
         code = str(row["Код статей"]).strip() if pd.notna(row["Код статей"]) else ""
-        by_period[(branch, month)].append((code, str(row["Наименование статей"]).strip(), row["Факт по 1С"]))
+        by_period[(branch, month)].append((code, str(row["Наименование статей"]).strip(),
+                                           row["Утверждено"], row["Факт по 1С"]))
 
-    def amount(value, branch, month, title):
+    def amount(value, branch, month, title, metric):
         if pd.isna(value) or (isinstance(value, str) and not value.strip()):
             return None
         try:
             number = Decimal(str(value))
         except InvalidOperation as error:
-            raise ValueError(f"Нечисловой факт 1С «{title}» для филиала «{branch}», месяц «{month}».") from error
+            raise ValueError(f"Нечисловое значение «{metric}» статьи «{title}» для филиала «{branch}», месяц «{month}».") from error
         if not number.is_finite():
-            raise ValueError(f"Неконечный факт 1С «{title}» для филиала «{branch}», месяц «{month}».")
+            raise ValueError(f"Неконечное значение «{metric}» статьи «{title}» для филиала «{branch}», месяц «{month}».")
         return number
 
     models = []
     has_realization = any(name == "ВСЕГО РЕАЛИЗАЦИЯ"
-                          for entries in by_period.values() for _, name, _ in entries)
+                          for entries in by_period.values() for _, name, _, _ in entries)
     if not has_realization:
         return models
     for title, selector in SHARE_SPECS:
         has_components = any(
             code.startswith(selector) if isinstance(selector, str) else code in selector
             for branch in branches for month in months
-            for code, _, _ in by_period[(branch, month)]
+            for code, _, _, _ in by_period[(branch, month)]
         )
         if not has_components:
             continue
         rows = []
-        for branch in branches:
-            numerator = denominator = Decimal(0)
+        for branch in calculation_branches:
+            numerators = {"plan": Decimal(0), "fact": Decimal(0)}
+            denominators = {"plan": Decimal(0), "fact": Decimal(0)}
             for month in months:
                 entries = by_period[(branch, month)]
-                totals = [value for code, name, value in entries if name == "ВСЕГО РЕАЛИЗАЦИЯ"]
-                denominator += sum((amount(value, branch, month, "ВСЕГО РЕАЛИЗАЦИЯ") or Decimal(0)
-                                    for value in totals), Decimal(0))
+                for _, name, plan_value, fact_value in entries:
+                    if name != "ВСЕГО РЕАЛИЗАЦИЯ":
+                        continue
+                    for metric, value in (("plan", plan_value), ("fact", fact_value)):
+                        denominators[metric] += amount(value, branch, month, "ВСЕГО РЕАЛИЗАЦИЯ",
+                                                       "Утверждено" if metric == "plan" else "Факт по 1С") or Decimal(0)
                 if isinstance(selector, str):
-                    values = [value for code, _, value in entries if code.startswith(selector)]
+                    values = [entry for entry in entries if entry[0].startswith(selector)]
                 else:
-                    values = []
-                    for required_code in selector:
-                        matches = [value for code, _, value in entries if code == required_code]
-                        values.extend(matches)
-                for value in values:
-                    numerator += amount(value, branch, month, title) or Decimal(0)
-            percent = numerator / denominator * 100 if denominator else Decimal(0)
-            rows.append({"branch": branch, "label": branch, "numerator": numerator,
-                         "realization": denominator, "percent": percent})
-        models.append((title, sorted(rows, key=lambda row: (-row["percent"], row["branch"]))))
+                    values = [entry for entry in entries if entry[0] in selector]
+                for _, _, plan_value, fact_value in values:
+                    for metric, value in (("plan", plan_value), ("fact", fact_value)):
+                        numerators[metric] += amount(value, branch, month, title,
+                                                      "Утверждено" if metric == "plan" else "Факт по 1С") or Decimal(0)
+            plan_percent = numerators["plan"] / denominators["plan"] * 100 if denominators["plan"] else Decimal(0)
+            fact_percent = numerators["fact"] / denominators["fact"] * 100 if denominators["fact"] else Decimal(0)
+            rows.append({"branch": branch, "label": branch, "numerator": numerators["fact"],
+                         "realization": denominators["fact"], "percent": fact_percent,
+                         "plan_percent": plan_percent, "plan_numerator": numerators["plan"],
+                         "plan_realization": denominators["plan"]})
+        rows_by_branch = {row["branch"]: row for row in rows}
+        plan_numerator = sum((rows_by_branch[branch]["plan_numerator"] for branch in average_branches), Decimal(0))
+        plan_realization = sum((rows_by_branch[branch]["plan_realization"] for branch in average_branches), Decimal(0))
+        fact_numerator = sum((rows_by_branch[branch]["numerator"] for branch in average_branches), Decimal(0))
+        fact_realization = sum((rows_by_branch[branch]["realization"] for branch in average_branches), Decimal(0))
+        plan_reference = plan_numerator / plan_realization * 100 if plan_realization else Decimal(0)
+        fact_reference = fact_numerator / fact_realization * 100 if fact_realization else Decimal(0)
+        displayed_rows = sorted((rows_by_branch[branch] for branch in branches),
+                                key=lambda row: (-row["percent"], row["branch"]))
+        models.append((title, displayed_rows,
+                       plan_reference, fact_reference))
     return models
 
 
 def financial_share_slides(ns, models):
+    from pptx.enum.chart import XL_DATA_LABEL_POSITION
+    from pptx.dml.color import RGBColor
     from pptx.util import Pt
 
     result = []
     for first in range(0, len(models), 3):
         deck = ns["new_presentation"]()
         slide = deck.slides.add_slide(deck.slide_layouts[6])
-        for position, (title, rows) in enumerate(models[first:first + 3]):
+        for position, (title, rows, plan_reference, fact_reference) in enumerate(models[first:first + 3]):
             top = .40 + position * 2.33
+            categories = ["План", "Факт ср."] + [row["label"] for row in rows]
+            values = [plan_reference, fact_reference] + [row["percent"] for row in rows]
             chart = ns["numeric_chart"](
-                slide, [row["label"] for row in rows],
-                [("Факт по 1С / всего реализация", [row["percent"] for row in rows], ns["STYLE"]["teal"])],
-                .12, top + .24, 13.05, 1.84, fmt='0.0', compact_base=19, compact_labels=True,
+                slide, categories,
+                [("Доля от всего реализация", values, ns["STYLE"]["teal"])],
+                .12, top + .24, 13.05, 1.84, fmt='0.0', compact_base=21, compact_labels=True,
             )
             fraction = .96 * min(1, max(.25, len(rows) / 19))
             ns["set_plot_layout"](chart.chart, x=(1 - fraction) / 2, y=.18, w=fraction, h=.34)
@@ -493,9 +533,27 @@ def financial_share_slides(ns, models):
                 tick_skip = [ns["OxmlElement"]('c:tickLblSkip')]
                 axis.append(tick_skip[0])
             tick_skip[0].set('val', '1')
-            chart.chart.series[0].data_labels.font.size = Pt(9)
-            for label_body in chart.chart.series[0]._element.xpath('./c:dLbls/c:txPr/a:bodyPr'):
-                label_body.set('rot', '0')
+            series = chart.chart.series[0]
+            series.data_labels.position = XL_DATA_LABEL_POSITION.CENTER
+            series.data_labels.font.size = Pt(11)
+            series.data_labels.font.bold = True
+            plot_height_pt = 1.84 * .34 * 72
+            axis_maximum = chart.chart.value_axis.maximum_scale
+            axis_minimum = chart.chart.value_axis.minimum_scale
+            for index, point in enumerate(series.points):
+                label = point.data_label
+                label.position = XL_DATA_LABEL_POSITION.CENTER
+                label.font.name = ns["STYLE"]["font"]
+                label.font.size = Pt(11)
+                label.font.bold = True
+                color = "FFFF00" if index < 2 else ("FFFFFF" if rows[index - 2]["percent"] > fact_reference else "000000")
+                label.font.color.rgb = RGBColor.from_string(color)
+                # A zero or very short column cannot contain an 11 pt label.
+                if abs(float(values[index])) / (axis_maximum - axis_minimum) * plot_height_pt < 10:
+                    point.data_label._dLbl.xpath('./c:showVal')[0].set('val', '0')
+                for label_body in series._element.xpath(f'./c:dLbls/c:dLbl[c:idx/@val="{index}"]/c:txPr/a:bodyPr'):
+                    label_body.set('rot', '0')
+                    label_body.set('wrap', 'none')
             ns["text_box"](slide, title, .36, top + .02, 3.95, .29,
                            size=13, bold=True, color="000000", fill="ADADAD", name="Показатель доли")
         result.append(ns["presentation_bytes"](deck))
@@ -624,7 +682,7 @@ def generate(payload):
                 payloads.append(ns["render_drug_models"](
                     models, heading=heading, series_names=("План", "Факт", "отк:") if book == "quantity"
                     else ("Факт по норме", "Факт по 1С", "отк:"), financial=book == "financial",
-                    articles=selectors, sort_by_difference=True))
+                    articles=selectors, sort_by_difference=True, total_period=total_period_caption(months)))
             models = quarter_models(ns, quantity, quantity_provenance, labels, months, "quantity", block)
             payloads.append(render_quarters(ns, models, "РАСХОДЫ " + category_titles[category] + ": по кварталам, " + period_caption(months) + " 2026 г. (количество)"))
 
@@ -640,7 +698,8 @@ def generate(payload):
         payloads.append(ns["render_drug_models"](
             expense_models, heading="РАСХОДЫ: " + period_caption(months) + " 2026 г. (тыс. тенге)",
             series_names=("Факт по норме", "Факт по 1С", "отк:"), financial=True,
-            articles=[(item["key"], item["title"]) for item in expense_items], sort_by_difference=True))
+            articles=[(item["key"], item["title"]) for item in expense_items], sort_by_difference=True,
+            total_period=total_period_caption(months)))
     quarter_items = [dict(title=label, key=" + ".join(codes), components=[(code, "") for code in codes],
                           selectors={"financial": list(codes)}) for label, codes in (
                               ("Расходы на транспорт", ("223.01", "223.02")),
@@ -653,7 +712,8 @@ def generate(payload):
                                                            "financial", quarter_items),
                                         "ФИНАНСОВЫЕ ПОКАЗАТЕЛИ: по кварталам, " + period_caption(months) + " 2026 г. (тыс. тенге)"))
     payloads.extend(financial_share_slides(
-        ns, financial_share_models(ns, financial, financial_provenance, branches, months)))
+        ns, financial_share_models(ns, *full_frames["financial"], branches, months,
+                                   average_branches=common)))
     result = ns["combine_created_slides"](payloads)
     with ZipFile(BytesIO(result)) as archive:
         if archive.testzip() is not None:
